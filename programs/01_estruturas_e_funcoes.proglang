@@ -1,0 +1,37 @@
+// ============================================================
+// 01_estruturas_e_funcoes.proglang
+// Feature Coverage:
+// - Pure data struct definition ('type')
+// - Pure side-effect-free functions ('func')
+// - Immutable and mutable variable declarations ('let', 'let mut')
+// - Arithmetic (+, -, *, /) and relational (==, !=, <, >) operators
+// - Struct field access (.field)
+// ============================================================
+
+type Point {
+    x: Int,
+    y: Int
+}
+
+type Rectangle {
+    origin: Point,
+    width: Int,
+    height: Int
+}
+
+func calculate_area(r: Rectangle) -> Int {
+    let mut area: Int = r.width * r.height;
+    area;
+}
+
+func is_square(r: Rectangle) -> Int {
+    let mut square_flag: Int = 0;
+    let equal: Int = r.width == r.height;
+    equal;
+}
+
+func perimeter(r: Rectangle) -> Int {
+    let double_width: Int = r.width * 2;
+    let double_height: Int = r.height * 2;
+    double_width + double_height;
+}

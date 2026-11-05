@@ -1,0 +1,19 @@
+// ============================================================
+// invalid_02_recursao_infinita.proglang
+// Negative Test: Structural Decrement (Induction) Verification
+//
+// Expected: The compiler MUST reject this program with error
+// SemanticError::NonDecreasingRecursion.
+//
+// Rule: Direct recursive calls are permitted ONLY if the argument
+// is proven to be a strictly smaller subcomponent extracted via match
+// (e.g., 'tail'). Here, passing 'list' (same size) would permit
+// non-terminating infinite recursion.
+// ============================================================
+
+func infinite_recursion(list: List[Int]) -> Int {
+    match list {
+        Nil => 0,
+        Cons(head, tail) => head + infinite_recursion(list)
+    }
+}

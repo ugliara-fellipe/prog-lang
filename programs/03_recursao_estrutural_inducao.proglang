@@ -1,0 +1,30 @@
+// ============================================================
+// 03_recursao_estrutural_inducao.proglang
+// Feature Coverage:
+// - Termination verification via structural induction
+// - Pattern matching ('match') with constructors and identifiers
+// - Inductive destructuring: 'Cons(head, tail)' and 'Nil'
+// - Guaranteed direct recursion: recursive call receives strictly
+//   smaller subcomponent 'tail' derived from input 'list'
+// ============================================================
+
+func sum_list(list: List[Int]) -> Int {
+    match list {
+        Nil => 0,
+        Cons(head, tail) => head + sum_list(tail)
+    }
+}
+
+func count_elements(list: List[Int]) -> Int {
+    match list {
+        Nil => 0,
+        Cons(head, tail) => 1 + count_elements(tail)
+    }
+}
+
+func double_sum(list: List[Int]) -> Int {
+    match list {
+        Nil => 0,
+        Cons(head, tail) => (head * 2) + double_sum(tail)
+    }
+}

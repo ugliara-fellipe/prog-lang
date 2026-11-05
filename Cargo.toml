@@ -1,0 +1,17 @@
+[package]
+name = "proglang"
+version = "0.1.0"
+edition = "2021"
+authors = ["ProgLang Team"]
+description = "Compiler and runtime for a language with finite routines and isolated actors"
+
+[dependencies]
+tokio = { version = "1.35", features = ["full"] }
+bumpalo = "3.14"
+thiserror = "1.0"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+petgraph = "0.6"
+
+[dev-dependencies]

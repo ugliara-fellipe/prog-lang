@@ -1,0 +1,24 @@
+// ============================================================
+// 05_arenas_e_referencias_locais.proglang
+// Feature Coverage:
+// - Per-routine Arena-based memory management
+// - Confinement of mutable pointers via 'Ref[T]' and 'ref expr'
+// - Instant O(1) deallocation on routine completion
+// - Absence of Garbage Collector (Zero GC pauses)
+// ============================================================
+
+type Metrics {
+    counter: Int,
+    label: String
+}
+
+routine ArenaMemoryProcessor(data: Metrics) {
+    // Fast O(1) allocation advancing bump pointer in routine's local Arena
+    let mut ref_counter: Ref[Int] = ref data.counter;
+    let mut ref_label: Ref[String] = ref data.label;
+
+    log("Routine executing with isolated pointers in Arena:", data.label);
+
+    // Confinement: 'ref_counter' cannot cross routine boundaries.
+    // Upon completion, entire Arena is destroyed in O(1).
+}

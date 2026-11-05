@@ -1,0 +1,18 @@
+// ============================================================
+// invalid_01_dag_ciclo.proglang
+// Negative Test: Call Graph (DAG) Verification
+//
+// Expected: The compiler MUST reject this program with error
+// SemanticError::CallGraphCycle("function_a" or "function_b").
+//
+// Rule: Pure functions cannot form mutual recursion cycles
+// (A -> B -> A) to guarantee strict bottom-up dependency ordering.
+// ============================================================
+
+func function_a(x: Int) -> Int {
+    function_b(x - 1);
+}
+
+func function_b(x: Int) -> Int {
+    function_a(x - 1);
+}

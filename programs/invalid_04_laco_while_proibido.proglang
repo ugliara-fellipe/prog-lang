@@ -1,0 +1,17 @@
+// ============================================================
+// invalid_04_laco_while_proibido.proglang
+// Negative Test: Absence of Unbounded Loops ('while')
+//
+// Expected: The compiler MUST reject with a syntax error (ParseError).
+//
+// Rule: In ProgLang, the keyword 'while' is intentionally excluded
+// from the grammar. Only bounded 'for x in collection' loops are
+// permitted to ensure guaranteed finite termination.
+// ============================================================
+
+func try_infinite_loop(x: Int) -> Int {
+    while x > 0 {
+        let x = x - 1;
+    }
+    x;
+}

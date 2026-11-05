@@ -1,0 +1,55 @@
+// ============================================================
+// 06_pipeline_completo.proglang
+// Feature Coverage (Full Integration):
+// - Structured inductive data types
+// - Pure functions with structurally proved termination
+// - Acyclic call graph (DAG) verification
+// - Actor model with pure value-copy semantics
+// - Routine-local Arena memory with confined Ref[T]
+// - Concurrent spawns and bounded loops
+// ============================================================
+
+type Task {
+    id: Int,
+    payload: String,
+    subtasks: List[Task]
+}
+
+func sum_tail(l: List[Task]) -> Int {
+    match l {
+        Nil => 0,
+        Cons(head, tail) => 1 + sum_tail(tail)
+    }
+}
+
+func count_subtasks(t: Task) -> Int {
+    match t.subtasks {
+        Nil => 1,
+        Cons(head, tail) => 1 + count_subtasks(head)
+    }
+}
+
+routine TaskExecutor(task: Task) {
+    // Local allocation in routine Arena
+    let mut ref_local: Ref[Int] = ref count_subtasks(task);
+    
+    log("Processing task ID:", task.id);
+
+    // Work division: recursive spawn with structurally smaller subcomponent
+    match task.subtasks {
+        Nil => {
+            log("Leaf node reached");
+        },
+        Cons(head, tail) => {
+            // 'head' is strictly smaller than 'task'
+            spawn TaskExecutor(head);
+            
+            // Concurrently dispatch tail elements
+            for sub in tail {
+                spawn TaskExecutor(sub);
+            }
+        }
+    }
+    
+    // Routine completes and local Arena is reclaimed in O(1)
+}

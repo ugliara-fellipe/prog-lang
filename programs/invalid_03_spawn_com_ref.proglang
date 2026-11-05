@@ -1,0 +1,21 @@
+// ============================================================
+// invalid_03_spawn_com_ref.proglang
+// Negative Test: Memory Confinement and References (Ref[T])
+//
+// Expected: The compiler MUST reject this program with error
+// SemanticError::UncopyableSpawnArgument.
+//
+// Rule: Type Ref[T] is confined to the routine's local Arena and
+// does NOT implement Copyable. Passing local mutable references
+// across a 'spawn' boundary is strictly prohibited.
+// ============================================================
+
+routine TargetWorker(ptr: Ref[Int]) {
+    log("Worker attempting to read shared pointer:", ptr);
+}
+
+routine PointerCreator() {
+    let mut local_ref: Ref[Int] = ref 42;
+    // ❌ COMPILE ERROR: 'local_ref' cannot be sent to another routine!
+    spawn TargetWorker(local_ref);
+}

@@ -1,0 +1,28 @@
+// ============================================================
+// 04_atores_concorrencia_spawn.proglang
+// Feature Coverage:
+// - Concurrent actor model with pure value semantics
+// - Isolated routine declarations ('routine')
+// - Asynchronous dispatch via 'spawn' statement
+// - Value-copied arguments (no shared mutable pointers)
+// - Concurrent spawns dispatched inside bounded loops
+// ============================================================
+
+type JobMessage {
+    job_id: Int,
+    payload: String
+}
+
+routine TaskWorker(job: JobMessage) {
+    log("Worker executing job ID:", job.job_id);
+    log("Job payload content:", job.payload);
+}
+
+routine QueueManager(batch: List[JobMessage]) {
+    log("Starting dispatch of concurrent jobs");
+
+    for job in batch {
+        // 'job' is cloned by value into the new isolated routine
+        spawn TaskWorker(job);
+    }
+}
