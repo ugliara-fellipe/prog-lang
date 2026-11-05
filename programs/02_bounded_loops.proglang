@@ -1,5 +1,5 @@
 // ============================================================
-// 02_lacos_delimitados.proglang
+// 02_bounded_loops.proglang
 // Feature Coverage:
 // - Strictly bounded repetition loops ('for ... in')
 // - Finite termination guarantee: absence of unbounded loops (no 'while')
@@ -13,13 +13,13 @@ type BatchData {
 }
 
 routine ProcessBatch(batch: BatchData) {
-    let mut total_processed: Ref[Int] = ref 0;
+    let mut total_processed: Ref[Int] = ref 0
     
     for item in batch.items {
-        log("Processing batch item:", item);
+        log("Processing batch item:", item)
     }
 
     for other in batch.items {
-        log("Checking item consistency:", other);
+        log("Checking item consistency:", other)
     }
 }

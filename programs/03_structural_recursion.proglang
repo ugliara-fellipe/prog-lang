@@ -1,5 +1,5 @@
 // ============================================================
-// 03_recursao_estrutural_inducao.proglang
+// 03_structural_recursion.proglang
 // Feature Coverage:
 // - Termination verification via structural induction
 // - Pattern matching ('match') with constructors and identifiers

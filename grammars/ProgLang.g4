@@ -27,11 +27,15 @@ funcDecl
     ;
 
 routineDecl
-    : 'routine' ID '(' paramList? ')' block
+    : 'routine' ID '(' routineParamList? ')' block
     ;
 
-paramList
-    : param (',' param)*
+routineParamList
+    : routineParam (',' routineParam)*
+    ;
+
+routineParam
+    : ID ':' (listType | primitiveType | genericType | customType)
     ;
 
 param
@@ -81,11 +85,11 @@ statement
     ;
 
 varDeclStmt
-    : 'let' 'mut'? ID (':' typeSpec)? '=' expr ';'
+    : 'let' 'mut'? ID (':' typeSpec)? '=' expr
     ;
 
 spawnStmt
-    : 'spawn' expr ';'
+    : 'spawn' expr
     ;
 
 forStmt
@@ -105,7 +109,7 @@ pattern
     ;
 
 exprStmt
-    : expr ';'
+    : expr
     ;
 
 expr

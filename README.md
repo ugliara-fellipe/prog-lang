@@ -14,16 +14,16 @@ proglang/
 │   └── ProgLang.g4         # ANTLR4 Grammar Specification (100% English)
 ├── programs/               # Test Suite Programs Covering Language Features
 │   ├── 00_hello_world.proglang
-│   ├── 01_estruturas_e_funcoes.proglang
-│   ├── 02_lacos_delimitados.proglang
-│   ├── 03_recursao_estrutural_inducao.proglang
-│   ├── 04_atores_concorrencia_spawn.proglang
-│   ├── 05_arenas_e_referencias_locais.proglang
-│   ├── 06_pipeline_completo.proglang
-│   ├── invalid_01_dag_ciclo.proglang
-│   ├── invalid_02_recursao_infinita.proglang
-│   ├── invalid_03_spawn_com_ref.proglang
-│   ├── invalid_04_laco_while_proibido.proglang
+│   ├── 01_structs_and_functions.proglang
+│   ├── 02_bounded_loops.proglang
+│   ├── 03_structural_recursion.proglang
+│   ├── 04_actors_concurrency_spawn.proglang
+│   ├── 05_arenas_and_local_refs.proglang
+│   ├── 06_full_pipeline.proglang
+│   ├── invalid_01_dag_cycle.proglang
+│   ├── invalid_02_infinite_recursion.proglang
+│   ├── invalid_03_spawn_with_ref.proglang
+│   ├── invalid_04_while_loop_prohibited.proglang
 │   └── README.md
 ├── src/
 │   ├── ast.rs              # Abstract Syntax Tree (AST) Node Definitions
@@ -51,8 +51,50 @@ proglang/
 1. **Absence of Unbounded Loops (`while`):** Prohibited at the parser/syntax level. Only strictly bounded loops `for x in collection` are accepted.
 2. **Indefinite Recursion Prevention via DAG:** Pure functions cannot form cyclic cross-calling graphs ($A \to B \to A$).
 3. **Structural Decrement Proof:** Direct recursion in pure functions or routines (`spawn`) is allowed only if the compiler proves the argument passed is a strictly smaller subcomponent (e.g. `tail` of a `List[T]`).
-4. **Absolute Memory Isolation (Confined `Ref[T]`):** Mutable references do not implement `Copyable`. The `spawn` statement accepts only value-copyable data.
+4. **Absolute Memory Isolation (Confined `Ref[T]`):** Mutable references are not copyable. The `spawn` statement accepts only value-copyable data. `Ref[T]` is forbidden in routine parameters (enforced at parse time).
 5. **Instant $O(1)$ Deallocation:** Every routine executes in an isolated `Arena` (`bumpalo`). Upon routine completion, the entire arena is destroyed with Zero Garbage Collector pauses.
+
+---
+
+## ✍️ Syntax Overview
+
+ProgLang does **not** use semicolons. Statements are newline-separated:
+
+```proglang
+// Variable declaration
+let x = 42
+let mut counter: Int = 0
+
+// Function call expression
+log("Hello, World!")
+
+// Spawn a routine (passes arguments by deep copy)
+spawn ProcessItem(x)
+
+// Bounded loop (only iteration construct allowed)
+for item in collection {
+    spawn HandleItem(item)
+}
+
+// Pattern matching
+match list {
+    Nil => 0,
+    Cons(head, tail) => head + sum(tail)
+}
+```
+
+### Copy / Reference Assignment Rules
+
+The same rules apply to variable assignments **and** function arguments:
+
+| Source → Target | Behaviour |
+|---|---|
+| `type → type` | Copies the value |
+| `type → Ref[T]` | Creates a reference to the value |
+| `Ref[T] → type` | Copies the value the reference points to |
+| `Ref[T] → Ref[T]` | Copies the reference (same arena slot) |
+
+> `Ref[T]` is confined to the current routine's arena and **cannot cross `spawn` boundaries**.
 
 ---
 
@@ -69,30 +111,17 @@ cargo build --release
 ### Run Programs Directly
 ```bash
 # Run Hello World
-./proglang hello_world.prolang
+./proglang programs/00_hello_world.proglang
 
 # Run any test suite program
-./proglang programs/06_pipeline_completo.proglang
+./proglang programs/06_full_pipeline.proglang
 
 # Run with full compiler & runtime telemetry
-./proglang --verbose hello_world.prolang
-```
-
-### Compile Once to Binary Artifact and Run
-```bash
-# Compile to .progc artifact
-./proglang compile hello_world.prolang
-
-# Execute the pre-compiled artifact instantly
-./proglang run hello_world.progc
+./proglang --verbose programs/06_full_pipeline.proglang
 ```
 
 ### Run Test Suite
 ```bash
-# CLI test runner
-./proglang --test-all
-
-# Automated integration tests
 cargo test
 ```
 

@@ -11,13 +11,13 @@
 // ============================================================
 
 func get_message() -> String {
-    "Hello, World!";
+    "Hello, World!"
 }
 
 routine HelloWorld() {
     // Local allocation in routine Arena (Zero GC)
-    let ref_msg: Ref[String] = ref get_message();
+    let ref_msg: Ref[String] = ref get_message()
 
     // Terminal print
-    log("Hello, World!");
+    log("Hello, World!")
 }

@@ -1,5 +1,5 @@
 // ============================================================
-// 06_pipeline_completo.proglang
+// 06_full_pipeline.proglang
 // Feature Coverage (Full Integration):
 // - Structured inductive data types
 // - Pure functions with structurally proved termination
@@ -31,22 +31,22 @@ func count_subtasks(t: Task) -> Int {
 
 routine TaskExecutor(task: Task) {
     // Local allocation in routine Arena
-    let mut ref_local: Ref[Int] = ref count_subtasks(task);
+    let mut ref_local: Ref[Int] = ref count_subtasks(task)
     
-    log("Processing task ID:", task.id);
+    log("Processing task ID:", task.id)
 
     // Work division: recursive spawn with structurally smaller subcomponent
     match task.subtasks {
         Nil => {
-            log("Leaf node reached");
+            log("Leaf node reached")
         },
         Cons(head, tail) => {
             // 'head' is strictly smaller than 'task'
-            spawn TaskExecutor(head);
+            spawn TaskExecutor(head)
             
             // Concurrently dispatch tail elements
             for sub in tail {
-                spawn TaskExecutor(sub);
+                spawn TaskExecutor(sub)
             }
         }
     }

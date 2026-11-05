@@ -35,7 +35,6 @@ pub enum TokenKind {
     LBracket,
     RBracket,
     Colon,
-    Semicolon,
     Comma,
     Dot,
     Arrow,    // ->
@@ -287,7 +286,6 @@ impl<'a> Lexer<'a> {
             '[' => TokenKind::LBracket,
             ']' => TokenKind::RBracket,
             ':' => TokenKind::Colon,
-            ';' => TokenKind::Semicolon,
             ',' => TokenKind::Comma,
             '.' => TokenKind::Dot,
             '=' => TokenKind::Assign,
@@ -469,6 +467,14 @@ impl<'a> Parser<'a> {
             let param_name = self.expect_id()?;
             self.expect(TokenKind::Colon)?;
             let param_type = self.parse_type_spec()?;
+            // Disallow Ref<T> in routine parameters (must be copyable)
+            if let TypeSpec::Ref(_) = param_type {
+                return Err(ParseError::SyntaxError {
+                    line: self.current.line,
+                    col: self.current.col,
+                    message: "Ref types are not allowed in routine parameters".to_string(),
+                });
+            }
             params.push(Param {
                 name: param_name,
                 param_type,
@@ -508,6 +514,14 @@ impl<'a> Parser<'a> {
             let param_name = self.expect_id()?;
             self.expect(TokenKind::Colon)?;
             let param_type = self.parse_type_spec()?;
+            // Disallow Ref<T> in routine parameters (must be copyable)
+            if let TypeSpec::Ref(_) = param_type {
+                return Err(ParseError::SyntaxError {
+                    line: self.current.line,
+                    col: self.current.col,
+                    message: "Ref types are not allowed in routine parameters".to_string(),
+                });
+            }
             params.push(Param {
                 name: param_name,
                 param_type,
@@ -567,7 +581,6 @@ impl<'a> Parser<'a> {
             TokenKind::Match => self.parse_match(),
             _ => {
                 let expr = self.parse_expr()?;
-                self.expect(TokenKind::Semicolon)?;
                 Ok(Statement::ExprStmt(expr))
             }
         }
@@ -592,7 +605,6 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::Assign)?;
         let value = self.parse_expr()?;
-        self.expect(TokenKind::Semicolon)?;
 
         Ok(Statement::VarDecl {
             name,
@@ -605,7 +617,6 @@ impl<'a> Parser<'a> {
     fn parse_spawn(&mut self) -> Result<Statement, ParseError> {
         self.expect(TokenKind::Spawn)?;
         let expr = self.parse_expr()?;
-        self.expect(TokenKind::Semicolon)?;
         Ok(Statement::Spawn(expr))
     }
 

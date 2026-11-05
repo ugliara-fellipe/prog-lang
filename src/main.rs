@@ -7,6 +7,7 @@ use proglang::parser::Parser;
 use proglang::semantic::dag::CallGraphValidator;
 use proglang::semantic::type_checker::TypeChecker;
 use proglang::semantic::termination::TerminationChecker;
+use proglang::semantic::complexity::ComplexityAnalyzer;
 use proglang::runtime::actor::{ActorHandle, Message};
 use proglang::runtime::event_loop::RuntimeEventLoop;
 
@@ -50,7 +51,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
 
-        // 3. Command: run <file.progc | file.prolang>
+        // 3. Command: annotate <file.proglang> [-o <output>]
+        //    Parses, validates and injects worst-case complexity comments.
+        if cmd == "annotate" {
+            if args.len() < 3 {
+                eprintln!("Usage: proglang annotate <file.proglang> [-o <output.proglang>]");
+                std::process::exit(1);
+            }
+            let input_path = &args[2];
+            let output_path = if args.len() >= 5 && args[3] == "-o" {
+                args[4].clone()
+            } else {
+                input_path.clone() // overwrite in-place by default
+            };
+            annotate_complexity(input_path, &output_path)?;
+            return Ok(());
+        }
+
+        // 4. Command: run <file.progc | file.prolang>
         if cmd == "run" {
             if args.len() < 3 {
                 eprintln!("Usage: proglang run <file.progc | file.prolang>");
@@ -269,12 +287,12 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
 
     let valid_files = [
         "programs/00_hello_world.proglang",
-        "programs/01_estruturas_e_funcoes.proglang",
-        "programs/02_lacos_delimitados.proglang",
-        "programs/03_recursao_estrutural_inducao.proglang",
-        "programs/04_atores_concorrencia_spawn.proglang",
-        "programs/05_arenas_e_referencias_locais.proglang",
-        "programs/06_pipeline_completo.proglang",
+        "programs/01_structs_and_functions.proglang",
+        "programs/02_bounded_loops.proglang",
+        "programs/03_structural_recursion.proglang",
+        "programs/04_actors_concurrency_spawn.proglang",
+        "programs/05_arenas_and_local_refs.proglang",
+        "programs/06_full_pipeline.proglang",
     ];
 
     println!("--- Verifying Valid Programs (Language Features) ---");
@@ -282,7 +300,7 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
         let source = fs::read_to_string(file)?;
         let mut parser = Parser::new(&source)?;
         let prog = parser.parse_program()?;
-        
+
         let mut dag = CallGraphValidator::new();
         dag.build_and_validate(&prog)?;
 
@@ -297,38 +315,123 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- Verifying Invalid Programs (Safety Guarantees) ---");
     // invalid_01
     {
-        let src = fs::read_to_string("programs/invalid_01_dag_ciclo.proglang")?;
+        let src = fs::read_to_string("programs/invalid_01_dag_cycle.proglang")?;
         let mut p = Parser::new(&src)?;
         let prog = p.parse_program()?;
         let mut dag = CallGraphValidator::new();
         assert!(dag.build_and_validate(&prog).is_err());
-        println!("  [OK] invalid_01_dag_ciclo successfully rejected (CallGraphCycle).");
+        println!("  [OK] invalid_01_dag_cycle successfully rejected (CallGraphCycle).");
     }
     // invalid_02
     {
-        let src = fs::read_to_string("programs/invalid_02_recursao_infinita.proglang")?;
+        let src = fs::read_to_string("programs/invalid_02_infinite_recursion.proglang")?;
         let mut p = Parser::new(&src)?;
         let prog = p.parse_program()?;
         assert!(TerminationChecker::verify_program(&prog).is_err());
-        println!("  [OK] invalid_02_recursao_infinita successfully rejected (NonDecreasingRecursion).");
+        println!("  [OK] invalid_02_infinite_recursion successfully rejected (NonDecreasingRecursion).");
     }
-    // invalid_03
+    // invalid_03 – rejected at parse level (Ref in routine param)
     {
-        let src = fs::read_to_string("programs/invalid_03_spawn_com_ref.proglang")?;
-        let mut p = Parser::new(&src)?;
-        let prog = p.parse_program()?;
-        let mut tc = TypeChecker::new();
-        assert!(tc.check_program(&prog).is_err());
-        println!("  [OK] invalid_03_spawn_com_ref successfully rejected (UncopyableSpawnArgument).");
+        let src = fs::read_to_string("programs/invalid_03_spawn_with_ref.proglang")?;
+        let res = Parser::new(&src).and_then(|mut p| p.parse_program());
+        assert!(res.is_err());
+        println!("  [OK] invalid_03_spawn_with_ref successfully rejected (SyntaxError).");
     }
     // invalid_04
     {
-        let src = fs::read_to_string("programs/invalid_04_laco_while_proibido.proglang")?;
+        let src = fs::read_to_string("programs/invalid_04_while_loop_prohibited.proglang")?;
         let res = Parser::new(&src).and_then(|mut p| p.parse_program());
         assert!(res.is_err());
-        println!("  [OK] invalid_04_laco_while_proibido successfully rejected at syntax level (while forbidden).");
+        println!("  [OK] invalid_04_while_loop_prohibited successfully rejected (SyntaxError).");
     }
 
     println!("\n✅ All suite programs validated with 100% success!");
     Ok(())
+}
+
+/// Reads a `.proglang` file, runs all validations, computes worst-case
+/// complexity for every `func` and `routine`, and writes the annotated
+/// source back to `output_path`.
+///
+/// For each declaration the tool inserts (or replaces) a line like:
+/// ```
+/// // complexity: O(N)
+/// ```
+/// immediately before the `func`/`routine` keyword.
+fn annotate_complexity(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("🔍 Analysing complexity of '{}'...", input_path);
+    let source = fs::read_to_string(input_path)?;
+
+    // Parse and validate first.
+    let mut parser = Parser::new(&source)?;
+    let program = parser.parse_program()?;
+    CallGraphValidator::new().build_and_validate(&program)?;
+    TypeChecker::new().check_program(&program)?;
+    TerminationChecker::verify_program(&program)?;
+
+    // Compute complexities.
+    let mut analyzer = ComplexityAnalyzer::new();
+    let entries = analyzer.analyze(&program);
+
+    println!("  Declarations analysed: {}", entries.len());
+    for e in &entries {
+        println!("    {} {} → {}", e.kind, e.name, e.complexity.to_big_o());
+    }
+
+    // Inject complexity comments into the source text.
+    let annotated = inject_complexity_comments(&source, &entries);
+
+    fs::write(output_path, &annotated)?;
+    println!("\n✅ Annotated source written to '{}'", output_path);
+    Ok(())
+}
+
+/// Injects `// complexity: O(…)` comments just before each `func`/`routine`
+/// declaration line in the source text.
+fn inject_complexity_comments(source: &str, entries: &[proglang::semantic::complexity::ComplexityEntry]) -> String {
+    // Build a lookup: (kind, name) -> big-o string.
+    let mut lookup: std::collections::HashMap<(&str, &str), String> = std::collections::HashMap::new();
+    for e in entries {
+        lookup.insert((e.kind, e.name.as_str()), e.complexity.to_big_o());
+    }
+
+    let mut out = String::with_capacity(source.len() + entries.len() * 40);
+    let complexity_prefix = "// complexity:";
+
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+
+        // Skip lines that are already complexity annotations (avoid duplicates
+        // when the user runs `annotate` more than once on the same file).
+        if trimmed.starts_with(complexity_prefix) {
+            continue;
+        }
+
+        // Check if this line starts a func or routine declaration.
+        let maybe_entry = if trimmed.starts_with("func ") {
+            let name = trimmed["func ".len()..].split(['(', '<', ' ']).next().unwrap_or("").trim();
+            lookup.get(&("func", name)).cloned()
+        } else if trimmed.starts_with("routine ") {
+            let name = trimmed["routine ".len()..].split(['(', '<', ' ']).next().unwrap_or("").trim();
+            lookup.get(&("routine", name)).cloned()
+        } else {
+            None
+        };
+
+        if let Some(big_o) = maybe_entry {
+            // Preserve the same indentation as the declaration line.
+            let indent_len = line.len() - trimmed.len();
+            let indent = &line[..indent_len];
+            out.push_str(indent);
+            out.push_str(complexity_prefix);
+            out.push(' ');
+            out.push_str(&big_o);
+            out.push('\n');
+        }
+
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    out
 }

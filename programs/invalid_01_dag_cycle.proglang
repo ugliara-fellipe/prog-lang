@@ -1,5 +1,5 @@
 // ============================================================
-// invalid_01_dag_ciclo.proglang
+// invalid_01_dag_cycle.proglang
 // Negative Test: Call Graph (DAG) Verification
 //
 // Expected: The compiler MUST reject this program with error
@@ -10,9 +10,9 @@
 // ============================================================
 
 func function_a(x: Int) -> Int {
-    function_b(x - 1);
+    function_b(x - 1)
 }
 
 func function_b(x: Int) -> Int {
-    function_a(x - 1);
+    function_a(x - 1)
 }

@@ -1,5 +1,5 @@
 // ============================================================
-// 04_atores_concorrencia_spawn.proglang
+// 04_actors_concurrency_spawn.proglang
 // Feature Coverage:
 // - Concurrent actor model with pure value semantics
 // - Isolated routine declarations ('routine')
@@ -14,15 +14,15 @@ type JobMessage {
 }
 
 routine TaskWorker(job: JobMessage) {
-    log("Worker executing job ID:", job.job_id);
-    log("Job payload content:", job.payload);
+    log("Worker executing job ID:", job.job_id)
+    log("Job payload content:", job.payload)
 }
 
 routine QueueManager(batch: List[JobMessage]) {
-    log("Starting dispatch of concurrent jobs");
+    log("Starting dispatch of concurrent jobs")
 
     for job in batch {
         // 'job' is cloned by value into the new isolated routine
-        spawn TaskWorker(job);
+        spawn TaskWorker(job)
     }
 }

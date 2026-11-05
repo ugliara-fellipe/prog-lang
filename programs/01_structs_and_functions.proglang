@@ -1,5 +1,5 @@
 // ============================================================
-// 01_estruturas_e_funcoes.proglang
+// 01_structs_and_functions.proglang
 // Feature Coverage:
 // - Pure data struct definition ('type')
 // - Pure side-effect-free functions ('func')
@@ -20,18 +20,18 @@ type Rectangle {
 }
 
 func calculate_area(r: Rectangle) -> Int {
-    let mut area: Int = r.width * r.height;
-    area;
+    let mut area: Int = r.width * r.height
+    area
 }
 
 func is_square(r: Rectangle) -> Int {
-    let mut square_flag: Int = 0;
-    let equal: Int = r.width == r.height;
-    equal;
+    let mut square_flag: Int = 0
+    let equal: Int = r.width == r.height
+    equal
 }
 
 func perimeter(r: Rectangle) -> Int {
-    let double_width: Int = r.width * 2;
-    let double_height: Int = r.height * 2;
-    double_width + double_height;
+    let double_width: Int = r.width * 2
+    let double_height: Int = r.height * 2
+    double_width + double_height
 }

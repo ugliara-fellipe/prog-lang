@@ -1,5 +1,5 @@
 // ============================================================
-// invalid_04_laco_while_proibido.proglang
+// invalid_04_while_loop_prohibited.proglang
 // Negative Test: Absence of Unbounded Loops ('while')
 //
 // Expected: The compiler MUST reject with a syntax error (ParseError).
@@ -11,7 +11,7 @@
 
 func try_infinite_loop(x: Int) -> Int {
     while x > 0 {
-        let x = x - 1;
+        let x = x - 1
     }
-    x;
+    x
 }

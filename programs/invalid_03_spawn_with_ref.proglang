@@ -1,5 +1,5 @@
 // ============================================================
-// invalid_03_spawn_com_ref.proglang
+// invalid_03_spawn_with_ref.proglang
 // Negative Test: Memory Confinement and References (Ref[T])
 //
 // Expected: The compiler MUST reject this program with error
@@ -11,11 +11,11 @@
 // ============================================================
 
 routine TargetWorker(ptr: Ref[Int]) {
-    log("Worker attempting to read shared pointer:", ptr);
+    log("Worker attempting to read shared pointer:", ptr)
 }
 
 routine PointerCreator() {
-    let mut local_ref: Ref[Int] = ref 42;
+    let mut local_ref: Ref[Int] = ref 42
     // ❌ COMPILE ERROR: 'local_ref' cannot be sent to another routine!
-    spawn TargetWorker(local_ref);
+    spawn TargetWorker(local_ref)
 }

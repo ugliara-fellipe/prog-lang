@@ -1,6 +1,7 @@
 pub mod dag;
 pub mod type_checker;
 pub mod termination;
+pub mod complexity;
 
 use thiserror::Error;
 
@@ -8,6 +9,9 @@ use thiserror::Error;
 pub enum SemanticError {
     #[error("Call graph cycle detected in function calls: {0}")]
     CallGraphCycle(String),
+
+    #[error("Argument count mismatch in call to {function}: expected {expected}, found {found}")]
+    ArgumentCountMismatch { function: String, expected: usize, found: usize },
 
     #[error("Type Error: Ref[T] cannot be passed across spawn to actor ({0})")]
     UncopyableSpawnArgument(String),
