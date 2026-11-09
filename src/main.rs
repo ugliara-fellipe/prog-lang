@@ -8,6 +8,7 @@ use proglang::semantic::dag::CallGraphValidator;
 use proglang::semantic::type_checker::TypeChecker;
 use proglang::semantic::termination::TerminationChecker;
 use proglang::semantic::complexity::ComplexityAnalyzer;
+use proglang::semantic::packages::PackageManager;
 use proglang::runtime::actor::{ActorHandle, Message};
 use proglang::runtime::event_loop::RuntimeEventLoop;
 
@@ -111,8 +112,13 @@ fn compile_to_artifact(input_path: &str, output_path: &str) -> Result<(), Box<dy
     // 1. Parsing
     println!("[1/4] Parsing source code...");
     let mut parser = Parser::new(&source)?;
-    let program = parser.parse_program()?;
-    println!("  -> AST constructed with {} declarations.", program.declarations.len());
+    let raw_program = parser.parse_program()?;
+
+    // Resolve packages/imports
+    let base_dir = Path::new(input_path).parent().unwrap_or_else(|| Path::new("."));
+    let mut pkg_mgr = PackageManager::new(base_dir);
+    let program = pkg_mgr.resolve_program(raw_program)?;
+    println!("  -> AST constructed with {} declarations (including imports).", program.declarations.len());
 
     // 2. Semantic Validations
     println!("[2/4] Validating Call Graph (DAG)...");
@@ -167,15 +173,25 @@ async fn compile_and_run_file(file_path: &str, verbose: bool) -> Result<(), Box<
         println!("[1/4] Parsing source code...");
     }
     let mut parser = Parser::new(&source)?;
-    let program = match parser.parse_program() {
+    let raw_program = match parser.parse_program() {
+        Ok(prog) => prog,
+        Err(e) => {
+            eprintln!("❌ Syntax Error: {}", e);
+            return Err(Box::new(e));
+        }
+    };
+
+    let base_dir = Path::new(file_path).parent().unwrap_or_else(|| Path::new("."));
+    let mut pkg_mgr = PackageManager::new(base_dir);
+    let program = match pkg_mgr.resolve_program(raw_program) {
         Ok(prog) => {
             if verbose {
-                println!("  -> Success: AST constructed with {} declarations.", prog.declarations.len());
+                println!("  -> Success: AST constructed with {} declarations (including imports).", prog.declarations.len());
             }
             prog
         }
         Err(e) => {
-            eprintln!("❌ Syntax Error: {}", e);
+            eprintln!("❌ Package / Import Error: {}", e);
             return Err(Box::new(e));
         }
     };
@@ -364,7 +380,10 @@ fn annotate_complexity(input_path: &str, output_path: &str) -> Result<(), Box<dy
 
     // Parse and validate first.
     let mut parser = Parser::new(&source)?;
-    let program = parser.parse_program()?;
+    let raw_program = parser.parse_program()?;
+    let base_dir = Path::new(input_path).parent().unwrap_or_else(|| Path::new("."));
+    let mut pkg_mgr = PackageManager::new(base_dir);
+    let program = pkg_mgr.resolve_program(raw_program)?;
     CallGraphValidator::new().build_and_validate(&program)?;
     TypeChecker::new().check_program(&program)?;
     TerminationChecker::verify_program(&program)?;

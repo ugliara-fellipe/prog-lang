@@ -1,16 +1,1 @@
-- fazer pacotes para poder importar func routines e types
-
-- verificar se a partes de atribuição ficou correta a implementação
-De → Para	Resultado
-Variável → Variável	Deep‑copy do valor.
-Variável → ref	O ref aponta para a mesma memória (não há cópia).
-ref → Variável	Copia o valor apontado (desreferencia).
-ref → ref	Ambas referenciam o mesmo bloco (sem cópia).
-
-- verificar se a analise de complexidade funciona
-
-- ver se a recurção realmente garente termino e como esta funcionando nas funçoes e dentro das rotinas
-
-- a primeira rotina a ser chamada eh a main e as outras so podem ser chamadas com swanp, func não pode ser chamado com swanp
-
-- fazer o swamp realmente rodar em outro nucleo , so usar o mesmo se não tiver outros para dividir, como usar melhor os nucleos disponiveis
+1. fazer o swamp realmente rodar em outro nucleo , so usar o mesmo se não tiver outros para dividir, como usar melhor os nucleos disponiveis

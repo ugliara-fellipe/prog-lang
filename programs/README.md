@@ -17,6 +17,7 @@ This directory contains a suite of programs written in **ProgLang** (`.proglang`
 | [`04_actors_concurrency_spawn.proglang`](04_actors_concurrency_spawn.proglang) | Actor model with pure value-copy semantics, routine declarations (`routine`), asynchronous dispatch via `spawn`, concurrent actor dispatch inside bounded loops. |
 | [`05_arenas_and_local_refs.proglang`](05_arenas_and_local_refs.proglang) | Routine-level $O(1)$ Arena memory management, local mutable references (`Ref[T]` and `ref` operator), instant $O(1)$ deallocation upon routine termination with Zero GC pauses. |
 | [`06_full_pipeline.proglang`](06_full_pipeline.proglang) | Full end-to-end integration: recursive inductive data structs, pure recursive functions, concurrent actor routines, routine-local Arena, pattern matching, and recursive subtask spawns. |
+| [`07_packages_and_imports.proglang`](07_packages_and_imports.proglang) | Package system and module imports: whole package import (`import math`), specific item imports (`import math.{Vector2D, multiply}`), cross-module function calls and routine spawns. |
 
 ---
 

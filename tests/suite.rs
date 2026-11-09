@@ -62,6 +62,24 @@ fn test_program_06_full_pipeline() {
 }
 
 #[test]
+fn test_program_07_packages_and_imports() {
+    let code = include_str!("../programs/07_packages_and_imports.proglang");
+    let mut parser = Parser::new(code).expect("Parser should initialize");
+    let raw_program = parser.parse_program().expect("Parse program");
+
+    let mut pkg_mgr = proglang::semantic::packages::PackageManager::new("programs");
+    let program = pkg_mgr.resolve_program(raw_program).expect("Resolve package imports");
+
+    let mut dag_validator = CallGraphValidator::new();
+    assert!(dag_validator.build_and_validate(&program).is_ok());
+
+    let mut type_checker = TypeChecker::new();
+    assert!(type_checker.check_program(&program).is_ok());
+
+    assert!(TerminationChecker::verify_program(&program).is_ok());
+}
+
+#[test]
 fn test_invalid_01_dag_cycle() {
     let code = include_str!("../programs/invalid_01_dag_cycle.proglang");
     let mut parser = Parser::new(code).expect("Parser should initialize");
@@ -92,6 +110,87 @@ fn test_invalid_03_spawn_with_ref() {
         "Expected SyntaxError for Ref in routine parameters, got {:?}",
         err
     );
+}
+
+#[test]
+fn test_complexity_analysis() {
+    let code = r#"
+func constant_fn(x: Int) -> Int {
+    let a = x + 1
+    a * 2
+}
+
+func recursive_fn(l: List[Int]) -> Int {
+    match l {
+        Nil => 0,
+        Cons(head, tail) => head + recursive_fn(tail)
+    }
+}
+
+routine RoutineO1(x: Int) {
+    let y = constant_fn(x)
+    log(y)
+}
+
+routine RoutineON(l: List[Int]) {
+    for x in l {
+        let y = constant_fn(x)
+        log(y)
+    }
+}
+
+routine RoutineON2(matrix: List[List[Int]]) {
+    for row in matrix {
+        for col in row {
+            log(col)
+        }
+    }
+}
+
+routine RoutineCallsRecursive(l: List[Int]) {
+    let total = recursive_fn(l)
+    log(total)
+}
+"#;
+    let mut parser = Parser::new(code).expect("Parser should initialize");
+    let program = parser.parse_program().expect("Parse program");
+
+    let mut analyzer = proglang::semantic::complexity::ComplexityAnalyzer::new();
+    let entries = analyzer.analyze(&program);
+
+    let map: std::collections::HashMap<String, String> = entries
+        .into_iter()
+        .map(|e| (e.name, e.complexity.to_big_o()))
+        .collect();
+
+    assert_eq!(map.get("constant_fn").unwrap(), "O(1)");
+    assert_eq!(map.get("recursive_fn").unwrap(), "O(N)");
+    assert_eq!(map.get("RoutineO1").unwrap(), "O(1)");
+    assert_eq!(map.get("RoutineON").unwrap(), "O(N)");
+    assert_eq!(map.get("RoutineON2").unwrap(), "O(N²)");
+    assert_eq!(map.get("RoutineCallsRecursive").unwrap(), "O(N)");
+}
+
+#[test]
+fn test_routines_can_interact_and_recurse() {
+    let code = r#"
+routine RoutineSelf(x: Int) {
+    spawn RoutineSelf(x)
+}
+
+routine RoutineA(x: Int) {
+    spawn RoutineB(x)
+}
+
+routine RoutineB(x: Int) {
+    spawn RoutineA(x)
+}
+"#;
+    let mut parser = Parser::new(code).expect("Parser should initialize");
+    let program = parser.parse_program().expect("Syntax should be valid");
+    let mut dag_validator = CallGraphValidator::new();
+    assert!(dag_validator.build_and_validate(&program).is_ok());
+    assert!(TerminationChecker::verify_program(&program).is_ok());
 }
 
 #[test]

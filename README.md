@@ -61,6 +61,10 @@ proglang/
 ProgLang does **not** use semicolons. Statements are newline-separated:
 
 ```proglang
+// Package import
+import math
+import math.{Vector2D, multiply}
+
 // Variable declaration
 let x = 42
 let mut counter: Int = 0

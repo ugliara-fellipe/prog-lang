@@ -128,7 +128,7 @@ impl ComplexityAnalyzer {
                         complexity,
                     });
                 }
-                TopLevelDecl::Type(_) => {}
+                TopLevelDecl::Type(_) | TopLevelDecl::Import(_) => {}
             }
         }
 

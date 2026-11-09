@@ -1,0 +1,21 @@
+// Package: math
+// Provides types and utility functions
+
+type Vector2D {
+    x: Int,
+    y: Int
+}
+
+func add(a: Int, b: Int) -> Int {
+    a + b
+}
+
+func multiply(a: Int, b: Int) -> Int {
+    a * b
+}
+
+routine ComputeWorker(val: Int) {
+    let res = add(val, 10)
+    log("Worker computed:", res)
+}
+

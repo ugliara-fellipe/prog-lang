@@ -39,18 +39,26 @@ impl TerminationChecker {
                     }
                 }
             }
-            Statement::ExprStmt(expr) => {
+            Statement::ExprStmt(expr) | Statement::Spawn(expr) => {
                 Self::check_expr_termination(expr, func_name, sub_components)?;
             }
             Statement::VarDecl { value, .. } => {
                 Self::check_expr_termination(value, func_name, sub_components)?;
             }
-            Statement::ForLoop { body, .. } => {
+            Statement::ForLoop { var_name, collection, body } => {
+                Self::check_expr_termination(collection, func_name, sub_components)?;
+                let mut loop_subs = sub_components.clone();
+                // If iterating over a subcomponent (e.g. `tail`), elements drawn from it (`sub`)
+                // are also structurally smaller subcomponents.
+                if let Expr::Variable(coll_name) = collection {
+                    if sub_components.contains(coll_name) {
+                        loop_subs.insert(var_name.clone());
+                    }
+                }
                 for s in body {
-                    Self::check_stmt_termination(s, func_name, sub_components)?;
+                    Self::check_stmt_termination(s, func_name, &loop_subs)?;
                 }
             }
-            _ => {}
         }
         Ok(())
     }

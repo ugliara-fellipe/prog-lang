@@ -18,6 +18,7 @@ pub enum TokenKind {
     Type,
     Func,
     Routine,
+    Import,
     Let,
     Mut,
     Spawn,
@@ -148,6 +149,7 @@ impl<'a> Lexer<'a> {
                 "type" => TokenKind::Type,
                 "func" => TokenKind::Func,
                 "routine" => TokenKind::Routine,
+                "import" => TokenKind::Import,
                 "let" => TokenKind::Let,
                 "mut" => TokenKind::Mut,
                 "spawn" => TokenKind::Spawn,
@@ -409,15 +411,56 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
+        let mut imports = Vec::new();
+        while self.current.kind == TokenKind::Import {
+            let imp = self.parse_import_decl()?;
+            imports.push(imp);
+        }
+
         let mut declarations = Vec::new();
+        for imp in &imports {
+            declarations.push(TopLevelDecl::Import(imp.clone()));
+        }
+
         while self.current.kind != TokenKind::Eof {
             declarations.push(self.parse_top_level_decl()?);
         }
-        Ok(Program { declarations })
+        Ok(Program { imports, declarations })
+    }
+
+    fn parse_import_decl(&mut self) -> Result<ImportDecl, ParseError> {
+        self.expect(TokenKind::Import)?;
+        let package = self.expect_id()?;
+
+        let kind = if self.check(&TokenKind::Dot) {
+            self.advance()?;
+            if self.check(&TokenKind::LBrace) {
+                self.advance()?;
+                let mut items = Vec::new();
+                while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+                    items.push(self.expect_id()?);
+                    if self.check(&TokenKind::Comma) {
+                        self.advance()?;
+                    } else {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RBrace)?;
+                ImportKind::Items(items)
+            } else {
+                let single = self.expect_id()?;
+                ImportKind::Single(single)
+            }
+        } else {
+            ImportKind::All
+        };
+
+        Ok(ImportDecl { package, kind })
     }
 
     fn parse_top_level_decl(&mut self) -> Result<TopLevelDecl, ParseError> {
         match self.current.kind {
+            TokenKind::Import => self.parse_import_decl().map(TopLevelDecl::Import),
             TokenKind::Type => self.parse_type_decl().map(TopLevelDecl::Type),
             TokenKind::Func => self.parse_func_decl().map(TopLevelDecl::Func),
             TokenKind::Routine => self.parse_routine_decl().map(TopLevelDecl::Routine),
@@ -425,7 +468,7 @@ impl<'a> Parser<'a> {
                 line: self.current.line,
                 col: self.current.col,
                 message: format!(
-                    "Unexpected top-level declaration: expected 'type', 'func', or 'routine', found {:?}",
+                    "Unexpected top-level declaration: expected 'import', 'type', 'func', or 'routine', found {:?}",
                     other
                 ),
             }),
@@ -540,7 +583,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_spec(&mut self) -> Result<TypeSpec, ParseError> {
-        let name = self.expect_id()?;
+        let mut name = self.expect_id()?;
+        if self.check(&TokenKind::Dot) {
+            self.advance()?;
+            let item = self.expect_id()?;
+            name = format!("{}.{}", name, item);
+        }
         if self.check(&TokenKind::LBracket) {
             self.advance()?;
             let mut inner = Vec::new();
@@ -797,6 +845,20 @@ impl<'a> Parser<'a> {
                 match expr {
                     Expr::Variable(name) => {
                         expr = Expr::FunctionCall { name, args };
+                    }
+                    Expr::MemberAccess { target, field } => {
+                        if let Expr::Variable(pkg) = *target {
+                            expr = Expr::FunctionCall {
+                                name: format!("{}.{}", pkg, field),
+                                args,
+                            };
+                        } else {
+                            return Err(ParseError::SyntaxError {
+                                line: self.current.line,
+                                col: self.current.col,
+                                message: "Dynamic function calls are not supported".to_string(),
+                            });
+                        }
                     }
                     _ => {
                         return Err(ParseError::SyntaxError {

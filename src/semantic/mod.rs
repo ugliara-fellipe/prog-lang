@@ -2,6 +2,7 @@ pub mod dag;
 pub mod type_checker;
 pub mod termination;
 pub mod complexity;
+pub mod packages;
 
 use thiserror::Error;
 
@@ -18,6 +19,9 @@ pub enum SemanticError {
 
     #[error("Termination Violation: Recursion argument is not strictly smaller on inductive parameter ({0})")]
     NonDecreasingRecursion(String),
+
+    #[error("Package error: {0}")]
+    PackageError(String),
 
     #[error("Undeclared symbol: {0}")]
     UndeclaredSymbol(String),

@@ -98,7 +98,21 @@ pub struct TypeDecl {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ImportKind {
+    All,
+    Single(String),
+    Items(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportDecl {
+    pub package: String,
+    pub kind: ImportKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TopLevelDecl {
+    Import(ImportDecl),
     Type(TypeDecl),
     Func(FuncDecl),
     Routine(RoutineDecl),
@@ -106,5 +120,6 @@ pub enum TopLevelDecl {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Program {
+    pub imports: Vec<ImportDecl>,
     pub declarations: Vec<TopLevelDecl>,
 }

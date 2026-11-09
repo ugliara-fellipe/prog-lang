@@ -5,7 +5,15 @@ grammar ProgLang;
 // ==========================================
 
 program
-    : topLevelDecl* EOF
+    : importDecl* topLevelDecl* EOF
+    ;
+
+importDecl
+    : 'import' ID ('.' (ID | '{' importItemList '}'))?
+    ;
+
+importItemList
+    : ID (',' ID)* ','?
     ;
 
 topLevelDecl
@@ -65,7 +73,7 @@ primitiveType
     ;
 
 customType
-    : ID
+    : (ID '.')? ID
     ;
 
 genericType
@@ -147,6 +155,7 @@ FUNC_KW    : 'func' ;
 ROUTINE_KW : 'routine' ;
 LET_KW     : 'let' ;
 MUT_KW     : 'mut' ;
+IMPORT_KW  : 'import' ;
 SPAWN_KW   : 'spawn' ;
 FOR_KW     : 'for' ;
 IN_KW      : 'in' ;

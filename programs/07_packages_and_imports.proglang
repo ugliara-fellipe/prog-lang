@@ -1,0 +1,13 @@
+// Demonstrates packages and imports in ProgLang
+import math
+import math.{Vector2D, multiply}
+
+routine Main() {
+    let sum = math.add(10, 20)
+    let prod = multiply(5, 4)
+    log("Sum via qualified import:", sum)
+    log("Prod via specific item import:", prod)
+
+    spawn math.ComputeWorker(sum)
+}
+
