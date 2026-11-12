@@ -52,7 +52,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
 
-        // 3. Command: annotate <file.proglang> [-o <output>]
+        // 3. Command: complexity <file.proglang> <name>
+        //    Or: complexity <file.proglang> <func|routine|loop> <name>
+        if cmd == "complexity" {
+            if args.len() < 4 || args.len() > 5 {
+                eprintln!("Usage: proglang complexity <file.proglang> [func|routine|loop] <name>");
+                std::process::exit(1);
+            }
+            let input_path = &args[2];
+            let (kind, name) = if args.len() == 5 {
+                (Some(args[3].as_str()), args[4].as_str())
+            } else {
+                (None, args[3].as_str())
+            };
+            query_complexity(input_path, kind, name)?;
+            return Ok(());
+        }
+
+        // 4. Command: annotate <file.proglang> [-o <output>]
         //    Parses, validates and injects worst-case complexity comments.
         if cmd == "annotate" {
             if args.len() < 3 {
@@ -69,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
 
-        // 4. Command: run <file.progc | file.prolang>
+        // 5. Command: run <file.progc | file.prolang>
         if cmd == "run" {
             if args.len() < 3 {
                 eprintln!("Usage: proglang run <file.progc | file.prolang>");
@@ -102,6 +119,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     compile_and_run_file(default_file, verbose).await?;
     Ok(())
+}
+
+/// Prints the worst-case complexity of one validated declaration.
+fn query_complexity(
+    input_path: &str,
+    requested_kind: Option<&str>,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = fs::read_to_string(input_path)?;
+    let mut parser = Parser::new(&source)?;
+    let raw_program = parser.parse_program()?;
+    let base_dir = Path::new(input_path).parent().unwrap_or_else(|| Path::new("."));
+    let mut pkg_mgr = PackageManager::new(base_dir);
+    let program = pkg_mgr.resolve_program(raw_program)?;
+
+    CallGraphValidator::new().build_and_validate(&program)?;
+    TypeChecker::new().check_program(&program)?;
+    TerminationChecker::verify_program(&program)?;
+
+    let kind = requested_kind.map(normalize_complexity_kind).transpose()?;
+    let entries = ComplexityAnalyzer::new().analyze(&program);
+    let matches: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.name == name && kind.map_or(true, |kind| entry.kind == kind))
+        .collect();
+
+    match matches.as_slice() {
+        [entry] => println!("{} {}: {}", entry.kind, entry.name, entry.complexity.to_big_o()),
+        [] => return Err(format!("No declaration named '{}'{} found", name, kind.map(|k| format!(" of kind '{}'", k)).unwrap_or_default()).into()),
+        _ => return Err(format!("Multiple declarations named '{}'; specify func, routine, or loop", name).into()),
+    }
+    Ok(())
+}
+
+fn normalize_complexity_kind(kind: &str) -> Result<&'static str, Box<dyn std::error::Error>> {
+    match kind {
+        "func" | "function" | "função" => Ok("func"),
+        "routine" | "rotina" => Ok("routine"),
+        "loop" => Ok("loop"),
+        _ => Err(format!("Unknown declaration kind '{}'; use func, routine, or loop", kind).into()),
+    }
 }
 
 /// Compiles ProgLang source code, runs formal verifications, and writes .progc artifact
@@ -254,16 +312,12 @@ async fn compile_and_run_file(file_path: &str, verbose: bool) -> Result<(), Box<
 }
 
 async fn execute_runtime(program: &Program, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let routines: Vec<&RoutineDecl> = program
-        .declarations
-        .iter()
-        .filter_map(|decl| match decl {
-            TopLevelDecl::Routine(r) => Some(r),
-            _ => None,
-        })
-        .collect();
+    let main_routine = program.declarations.iter().find_map(|decl| match decl {
+        TopLevelDecl::Routine(routine) if routine.name == "main" => Some(routine),
+        _ => None,
+    });
 
-    if !routines.is_empty() {
+    if let Some(main_routine) = main_routine {
         if verbose {
             println!("\n------------------------------------------------------------");
             println!(" Starting ProgLang Runtime (Tokio EventLoop & Arenas)");
@@ -272,28 +326,53 @@ async fn execute_runtime(program: &Program, verbose: bool) -> Result<(), Box<dyn
 
         let (tx, rx) = mpsc::channel(32);
         let mut event_loop = RuntimeEventLoop::with_verbose(rx, verbose);
+        let signal_router = event_loop.signal_router();
+        let shutdown_handle = event_loop.shutdown_handle();
         let actor_handle = ActorHandle::new(tx);
 
-        tokio::spawn(async move {
+        for routine in program.declarations.iter().filter_map(|decl| match decl {
+            TopLevelDecl::Routine(r) => Some(r),
+            _ => None,
+        }) {
+            if !signal_router.register_routine(&routine.name, routine.body.clone()) {
+                return Err(format!("Duplicate routine name at runtime: '{}'", routine.name).into());
+            }
+        }
+
+        for loop_decl in program.declarations.iter().filter_map(|decl| match decl {
+            TopLevelDecl::Loop(l) => Some(l),
+            _ => None,
+        }) {
+            if !signal_router.register_loop(&loop_decl.name, loop_decl.body.clone()) {
+                return Err(format!("Duplicate loop name at runtime: '{}'", loop_decl.name).into());
+            }
+        }
+
+        let mut event_task = tokio::spawn(async move {
             event_loop.run().await;
         });
 
-        for routine in routines {
-            if verbose {
-                println!("  [Dispatch] Dispatching execution of routine '{}'", routine.name);
-            }
-            actor_handle
-                .send_spawn(Message {
-                    routine_name: routine.name.clone(),
-                    payload: format!("Routine {} started", routine.name),
-                    statements: routine.body.clone(),
-                })
-                .await?;
+        if verbose {
+            println!("  [Dispatch] Starting entry routine 'main'");
         }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        actor_handle.send_spawn(Message {
+            routine_name: main_routine.name.clone(),
+            payload: "Routine main started".to_string(),
+            statements: main_routine.body.clone(),
+            is_loop: false,
+        }).await?;
+        drop(actor_handle);
+        tokio::select! {
+            result = &mut event_task => { result?; }
+            ctrl_c = tokio::signal::ctrl_c() => {
+                ctrl_c?;
+                eprintln!("\nInterrupt received; stopping all running routines and loops...");
+                shutdown_handle.shutdown();
+                event_task.await?;
+            }
+        }
     } else if verbose {
-        println!("\nProgram verified successfully! (No 'routine' declarations to dispatch to runtime)");
+        println!("\nProgram verified successfully! (Library: no `routine main()` entry point)");
     }
     Ok(())
 }
@@ -309,6 +388,11 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
         "programs/04_actors_concurrency_spawn.proglang",
         "programs/05_arenas_and_local_refs.proglang",
         "programs/06_full_pipeline.proglang",
+        "programs/08_persistent_loop.proglang",
+        "programs/09_loop_signals.proglang",
+        "programs/10_exceptions.proglang",
+        "programs/11_search_and_sort.proglang",
+        "programs/12_main_entry.proglang",
     ];
 
     println!("--- Verifying Valid Programs (Language Features) ---");

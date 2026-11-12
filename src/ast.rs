@@ -43,6 +43,9 @@ pub enum Expr {
     IntLiteral(i64),
     StringLiteral(String),
     Variable(String),
+    /// The signal delivered to the current loop iteration. Access its fields
+    /// as `receive.value` and `receive.pending`.
+    ReceiveSignal,
     RefCreate(Box<Expr>),
     FunctionCall { name: String, args: Vec<Expr> },
     MemberAccess { target: Box<Expr>, field: String },
@@ -64,6 +67,19 @@ pub enum Statement {
         value: Expr,
     },
     Spawn(Expr),
+    /// Asynchronously sends a value to the named persistent loop.
+    Signal { loop_name: String, payload: Expr },
+    /// Raises an exception value. Only pure functions may emit exceptions.
+    Throw(Expr),
+    /// Handles an exception raised by the protected block.
+    TryCatch {
+        try_body: Vec<Statement>,
+        error_name: String,
+        catch_body: Vec<Statement>,
+    },
+    /// Ends the current loop iteration permanently. `terminate` is meaningful only
+    /// while a loop task is executing.
+    Terminate,
     ForLoop {
         var_name: String,
         collection: Expr,
@@ -88,6 +104,14 @@ pub struct FuncDecl {
 pub struct RoutineDecl {
     pub name: String,
     pub params: Vec<Param>,
+    pub body: Vec<Statement>,
+}
+
+/// A long-lived actor. Each completed iteration is put back on the same work
+/// queue used by routines; it never owns a worker thread or CPU core.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoopDecl {
+    pub name: String,
     pub body: Vec<Statement>,
 }
 
@@ -116,6 +140,7 @@ pub enum TopLevelDecl {
     Type(TypeDecl),
     Func(FuncDecl),
     Routine(RoutineDecl),
+    Loop(LoopDecl),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

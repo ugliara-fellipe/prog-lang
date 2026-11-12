@@ -1,0 +1,24 @@
+// Search and sorting examples used to validate static complexity analysis.
+
+// Structural linear search: inspect one item, then recurse over the tail.
+func LinearSearch(items: List[Int], target: Int) -> Bool {
+    match items {
+        Nil => False,
+        Cons(head, tail) => {
+            match equals(head, target) {
+                True => True,
+                False => LinearSearch(tail, target)
+            }
+        }
+    }
+}
+
+// Bubble sort performs a comparison for every pair of input elements.
+// The runtime's compare_and_swap primitive is represented as a call here.
+routine BubbleSort(items: List[Int]) {
+    for item in items {
+        for other in items {
+            compare_and_swap(item, other)
+        }
+    }
+}

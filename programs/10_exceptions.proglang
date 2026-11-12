@@ -1,0 +1,32 @@
+// Functions may emit and catch exceptions. Routines and loops may catch
+// exceptions emitted by functions, but cannot throw directly.
+
+func may_fail(value: Int) -> Int {
+    try {
+        throw "invalid value"
+    } catch error {
+        log("function caught:", error)
+    }
+    value
+}
+
+routine Worker(value: Int) {
+    try {
+        may_fail(value)
+    } catch error {
+        log("routine caught:", error)
+    }
+}
+
+routine StartMonitor() {
+    spawn Monitor()
+}
+
+loop Monitor() {
+    try {
+        may_fail(0)
+    } catch error {
+        log("loop caught:", error)
+    }
+    terminate
+}

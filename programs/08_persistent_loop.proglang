@@ -1,0 +1,5 @@
+// A loop iteration is scheduled on the same queue as routines. Without
+// `terminate`, reaching the end of the body schedules the next iteration.
+loop OneShotPoller() {
+    terminate
+}

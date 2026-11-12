@@ -1,8 +1,8 @@
 /// Complexity Analyzer for ProgLang.
 ///
-/// Since all routines are guaranteed finite (no unbounded loops, no infinite
-/// recursion), we can compute a **static worst-case complexity class** for
-/// every `func` and `routine` declaration straight from the AST.
+/// Functions and routines are guaranteed finite, and each isolated loop
+/// iteration is guaranteed finite. We can therefore compute a **static
+/// worst-case complexity class** for every declaration straight from the AST.
 ///
 /// ## Rules
 /// | Construct                       | Added complexity |
@@ -128,6 +128,14 @@ impl ComplexityAnalyzer {
                         complexity,
                     });
                 }
+                TopLevelDecl::Loop(l) => {
+                    let complexity = self.complexity_of_body(&l.body, &recursive_funcs);
+                    results.push(ComplexityEntry {
+                        name: l.name.clone(),
+                        kind: "loop",
+                        complexity,
+                    });
+                }
                 TopLevelDecl::Type(_) | TopLevelDecl::Import(_) => {}
             }
         }
@@ -151,11 +159,15 @@ impl ComplexityAnalyzer {
     fn stmt_calls(name: &str, stmt: &Statement) -> bool {
         match stmt {
             Statement::ExprStmt(e) | Statement::Spawn(e) => Self::expr_calls(name, e),
+            Statement::Signal { payload, .. } => Self::expr_calls(name, payload),
+            Statement::Throw(expr) => Self::expr_calls(name, expr),
+            Statement::TryCatch { try_body, catch_body, .. } => try_body.iter().chain(catch_body).any(|s| Self::stmt_calls(name, s)),
             Statement::VarDecl { value, .. } => Self::expr_calls(name, value),
             Statement::ForLoop { body, .. } => body.iter().any(|s| Self::stmt_calls(name, s)),
             Statement::Match { cases, .. } => {
                 cases.iter().any(|c| c.body.iter().any(|s| Self::stmt_calls(name, s)))
             }
+            Statement::Terminate => false,
         }
     }
 
@@ -191,7 +203,13 @@ impl ComplexityAnalyzer {
     ) -> Complexity {
         match stmt {
             // Simple statements without sub-structure.
-            Statement::Spawn(_) => Complexity::Constant,
+            Statement::Spawn(_) | Statement::Terminate => Complexity::Constant,
+            Statement::Signal { payload, .. } => self.complexity_of_expr(payload, recursive),
+            Statement::Throw(expr) => self.complexity_of_expr(expr, recursive),
+            Statement::TryCatch { try_body, catch_body, .. } => {
+                self.complexity_of_body(try_body, recursive)
+                    .max(&self.complexity_of_body(catch_body, recursive))
+            }
             Statement::VarDecl { value, .. } => self.complexity_of_expr(value, recursive),
             Statement::ExprStmt(e) => self.complexity_of_expr(e, recursive),
 

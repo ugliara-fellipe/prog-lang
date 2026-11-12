@@ -67,6 +67,12 @@ impl PackageManager {
                             matched_decls.push(TopLevelDecl::Routine(qualified));
                             matched_decls.push(TopLevelDecl::Routine(r.clone()));
                         }
+                        TopLevelDecl::Loop(l) => {
+                            let mut qualified = l.clone();
+                            qualified.name = format!("{}.{}", pkg_name, l.name);
+                            matched_decls.push(TopLevelDecl::Loop(qualified));
+                            matched_decls.push(TopLevelDecl::Loop(l.clone()));
+                        }
                         TopLevelDecl::Type(t) => {
                             let mut qualified = t.clone();
                             qualified.name = format!("{}.{}", pkg_name, t.name);
@@ -93,6 +99,13 @@ impl PackageManager {
                             qualified.name = format!("{}.{}", pkg_name, r.name);
                             matched_decls.push(TopLevelDecl::Routine(qualified));
                             matched_decls.push(TopLevelDecl::Routine(r.clone()));
+                            found = true;
+                        }
+                        TopLevelDecl::Loop(l) if &l.name == item_name => {
+                            let mut qualified = l.clone();
+                            qualified.name = format!("{}.{}", pkg_name, l.name);
+                            matched_decls.push(TopLevelDecl::Loop(qualified));
+                            matched_decls.push(TopLevelDecl::Loop(l.clone()));
                             found = true;
                         }
                         TopLevelDecl::Type(t) if &t.name == item_name => {
@@ -129,6 +142,13 @@ impl PackageManager {
                                 qualified.name = format!("{}.{}", pkg_name, r.name);
                                 matched_decls.push(TopLevelDecl::Routine(qualified));
                                 matched_decls.push(TopLevelDecl::Routine(r.clone()));
+                                found = true;
+                            }
+                            TopLevelDecl::Loop(l) if &l.name == item_name => {
+                                let mut qualified = l.clone();
+                                qualified.name = format!("{}.{}", pkg_name, l.name);
+                                matched_decls.push(TopLevelDecl::Loop(qualified));
+                                matched_decls.push(TopLevelDecl::Loop(l.clone()));
                                 found = true;
                             }
                             TopLevelDecl::Type(t) if &t.name == item_name => {

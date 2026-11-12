@@ -1,8 +1,8 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
-use crate::runtime::actor::Message;
+use crate::runtime::actor::{LoopSpawn, Message, ReceivedSignal, SignalRouter};
 use crate::runtime::arena::RoutineArena;
 use crate::ast::{Statement, Expr};
 
@@ -14,10 +14,17 @@ use crate::ast::{Statement, Expr};
 /// 3. Global Injector Queue: spawns from outside are dispatched fairly.
 /// 4. Work-Stealing: idle cores steal tasks from other cores, guaranteeing 100% utilization.
 pub struct WorkStealingPool {
-    injector: Arc<Injector<Message>>,
+    injector: Arc<Injector<(Message, Arc<SignalRouter>)>>,
     shutdown: Arc<AtomicBool>,
+    pending_tasks: Arc<AtomicUsize>,
     _worker_threads: Vec<JoinHandle<()>>,
     num_cores: usize,
+}
+
+enum ExecutionControl {
+    Continue,
+    Terminate,
+    Throw(String),
 }
 
 impl WorkStealingPool {
@@ -31,6 +38,7 @@ impl WorkStealingPool {
 
         let injector = Arc::new(Injector::new());
         let shutdown = Arc::new(AtomicBool::new(false));
+        let pending_tasks = Arc::new(AtomicUsize::new(0));
 
         // Create local worker deques
         let mut workers = Vec::with_capacity(num_cores);
@@ -50,6 +58,7 @@ impl WorkStealingPool {
             let injector_clone = Arc::clone(&injector);
             let stealers_clone = Arc::clone(&stealers);
             let shutdown_clone = Arc::clone(&shutdown);
+            let pending_clone = Arc::clone(&pending_tasks);
 
             let handle = thread::Builder::new()
                 .name(format!("proglang-core-worker-{}", worker_id))
@@ -65,6 +74,7 @@ impl WorkStealingPool {
                         &injector_clone,
                         &stealers_clone,
                         &shutdown_clone,
+                        &pending_clone,
                         verbose,
                     );
                 })
@@ -76,6 +86,7 @@ impl WorkStealingPool {
         Self {
             injector,
             shutdown,
+            pending_tasks,
             _worker_threads: worker_threads,
             num_cores,
         }
@@ -86,16 +97,33 @@ impl WorkStealingPool {
     }
 
     /// Schedule a routine message for execution across the core pool.
-    pub fn schedule(&self, message: Message) {
-        self.injector.push(message);
+    pub fn schedule(&self, message: Message, signal_router: Arc<SignalRouter>) {
+        self.pending_tasks.fetch_add(1, Ordering::Release);
+        self.injector.push((message, signal_router));
+    }
+
+    pub fn is_idle(&self) -> bool {
+        self.pending_tasks.load(Ordering::Acquire) == 0
+    }
+
+    /// Stops all workers immediately. Used for an explicit Ctrl+C request;
+    /// queued routines and persistent loops are discarded rather than being
+    /// re-enqueued again.
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::Release);
+    }
+
+    pub fn is_shutdown(&self) -> bool {
+        self.shutdown.load(Ordering::Acquire)
     }
 
     fn worker_loop(
         core_id: usize,
-        local: Worker<Message>,
-        global: &Injector<Message>,
-        stealers: &[Stealer<Message>],
+        local: Worker<(Message, Arc<SignalRouter>)>,
+        global: &Injector<(Message, Arc<SignalRouter>)>,
+        stealers: &[Stealer<(Message, Arc<SignalRouter>)>],
         shutdown: &AtomicBool,
+        pending_tasks: &AtomicUsize,
         verbose: bool,
     ) {
         while !shutdown.load(Ordering::Relaxed) {
@@ -123,7 +151,7 @@ impl WorkStealingPool {
                 })
             });
 
-            if let Some(msg) = maybe_msg {
+            if let Some((msg, signal_router)) = maybe_msg {
                 // Execute routine in its own isolated Arena
                 let arena = RoutineArena::new();
                 let allocated_payload = arena.alloc(msg.payload.clone());
@@ -135,8 +163,35 @@ impl WorkStealingPool {
                     );
                 }
 
+                let received_signal = if msg.is_loop {
+                    let received = signal_router.receive_next(&msg.routine_name);
+                    if verbose && received.value.is_some() {
+                        println!("  [Core #{} Loop] Received signal: {:?} ({} pending)", core_id, received.value, received.pending);
+                    }
+                    Some(received)
+                } else { None };
+
+                let mut stopped = false;
                 for stmt in &msg.statements {
-                    Self::execute_statement(stmt, &arena, verbose, core_id);
+                    match Self::execute_statement(stmt, &arena, verbose, core_id, global, pending_tasks, &signal_router, received_signal.as_ref()) {
+                        ExecutionControl::Continue => {}
+                        ExecutionControl::Terminate => { stopped = true; break; }
+                        ExecutionControl::Throw(error) => {
+                            if verbose { println!("  [Core #{} Exception] Unhandled: {}", core_id, error); }
+                            stopped = true;
+                            break;
+                        }
+                    }
+                }
+                // Requeue completed loop iterations on the same global work
+                // injector used by routines. No thread/core belongs to a loop.
+                if msg.is_loop && !stopped && !shutdown.load(Ordering::Relaxed) {
+                    global.push((msg, signal_router));
+                } else if msg.is_loop && stopped {
+                    signal_router.stop_loop(&msg.routine_name);
+                    pending_tasks.fetch_sub(1, Ordering::Release);
+                } else if !msg.is_loop {
+                    pending_tasks.fetch_sub(1, Ordering::Release);
                 }
                 // Routine completes and entire arena is freed instantly in O(1)
             } else {
@@ -147,96 +202,172 @@ impl WorkStealingPool {
         }
     }
 
-    fn execute_statement(stmt: &Statement, arena: &RoutineArena, verbose: bool, core_id: usize) {
+    fn execute_statement(stmt: &Statement, arena: &RoutineArena, verbose: bool, core_id: usize, global: &Injector<(Message, Arc<SignalRouter>)>, pending_tasks: &AtomicUsize, signal_router: &Arc<SignalRouter>, received_signal: Option<&ReceivedSignal>) -> ExecutionControl {
         match stmt {
             Statement::ExprStmt(expr) => {
-                Self::execute_expr(expr, arena, verbose, core_id);
+                Self::execute_expr(expr, arena, verbose, core_id, received_signal);
+                ExecutionControl::Continue
             }
             Statement::VarDecl { name, value, is_mutable, .. } => {
-                let formatted = Self::format_expr(value);
+                let formatted = Self::format_expr(value, received_signal);
                 let stored = arena.alloc(formatted);
                 if verbose {
                     let mut_tag = if *is_mutable { "mut " } else { "" };
                     println!("  [Core #{} Arena] Local variable let {}{} = {} allocated in Arena", core_id, mut_tag, name, stored);
                 }
+                ExecutionControl::Continue
             }
             Statement::Spawn(expr) => {
-                if verbose {
-                    println!("  [Core #{} Concurrent Spawn] Dispatching actor for: {}", core_id, Self::format_expr(expr));
+                if let Expr::FunctionCall { name, args } = expr {
+                    // Loops have no call parameters. A single argument in a
+                    // spawn is therefore its asynchronous signal value.
+                    if signal_router.has_loop(name) {
+                        let payload = args.first().map(|arg| Self::format_expr_value(arg, received_signal));
+                        match signal_router.spawn_or_signal(name, payload) {
+                            LoopSpawn::Started(loop_message) => {
+                                pending_tasks.fetch_add(1, Ordering::Release);
+                                global.push((loop_message, Arc::clone(signal_router)));
+                                if verbose { println!("  [Core #{} Loop] Started {}", core_id, name); }
+                            }
+                            LoopSpawn::Signalled => {
+                                if verbose { println!("  [Core #{} Loop Signal] queued -> {}", core_id, name); }
+                            }
+                            LoopSpawn::Unknown => {}
+                        }
+                        return ExecutionControl::Continue;
+                    }
+                    if let Some(routine_message) = signal_router.spawn_routine(
+                        name,
+                        Self::format_expr(expr, received_signal),
+                    ) {
+                        pending_tasks.fetch_add(1, Ordering::Release);
+                        global.push((routine_message, Arc::clone(signal_router)));
+                        return ExecutionControl::Continue;
+                    }
                 }
+                if verbose {
+                    println!("  [Core #{} Concurrent Spawn] Dispatching actor for: {}", core_id, Self::format_expr(expr, received_signal));
+                }
+                ExecutionControl::Continue
+            }
+            Statement::Signal { loop_name, payload } => {
+                let delivered = signal_router.emit(loop_name, Self::format_expr_value(payload, received_signal));
+                if verbose {
+                    println!("  [Core #{} Signal] {} -> {}", core_id, if delivered { "queued" } else { "dropped" }, loop_name);
+                }
+                ExecutionControl::Continue
+            }
+            Statement::Throw(value) => {
+                ExecutionControl::Throw(Self::format_expr_value(value, received_signal))
+            }
+            Statement::TryCatch { try_body, error_name, catch_body } => {
+                for statement in try_body {
+                    match Self::execute_statement(statement, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal) {
+                        ExecutionControl::Continue => {}
+                        ExecutionControl::Terminate => return ExecutionControl::Terminate,
+                        ExecutionControl::Throw(error) => {
+                            if verbose { println!("  [Core #{} Exception] {} caught: {}", core_id, error_name, error); }
+                            for statement in catch_body {
+                                match Self::execute_statement(statement, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal) {
+                                    ExecutionControl::Continue => {}
+                                    control => return control,
+                                }
+                            }
+                            return ExecutionControl::Continue;
+                        }
+                    }
+                }
+                ExecutionControl::Continue
             }
             Statement::ForLoop { var_name, collection, body } => {
                 if verbose {
-                    println!("  [Core #{} Bounded Loop] Executing 'for {} in {}' ({} instructions)", core_id, var_name, Self::format_expr(collection), body.len());
+                    println!("  [Core #{} Bounded Loop] Executing 'for {} in {}' ({} instructions)", core_id, var_name, Self::format_expr(collection, received_signal), body.len());
                 }
                 for s in body {
-                    Self::execute_statement(s, arena, verbose, core_id);
+                    match Self::execute_statement(s, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal) {
+                        ExecutionControl::Continue => {}
+                        control => return control,
+                    }
                 }
+                ExecutionControl::Continue
             }
             Statement::Match { target, cases } => {
                 if verbose {
-                    println!("  [Core #{} Match] Pattern matching on {} with {} evaluated cases.", core_id, Self::format_expr(target), cases.len());
+                    println!("  [Core #{} Match] Pattern matching on {} with {} evaluated cases.", core_id, Self::format_expr(target, received_signal), cases.len());
                 }
                 if let Some(first_case) = cases.first() {
                     for s in &first_case.body {
-                        Self::execute_statement(s, arena, verbose, core_id);
+                        match Self::execute_statement(s, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal) {
+                            ExecutionControl::Continue => {}
+                            control => return control,
+                        }
                     }
                 }
+                ExecutionControl::Continue
             }
+            Statement::Terminate => ExecutionControl::Terminate,
         }
     }
 
-    fn execute_expr(expr: &Expr, _arena: &RoutineArena, verbose: bool, core_id: usize) {
+    fn execute_expr(expr: &Expr, _arena: &RoutineArena, verbose: bool, core_id: usize, received_signal: Option<&ReceivedSignal>) {
         if let Expr::FunctionCall { name, args } = expr {
             if name == "log" || name == "print" || name == "println" {
-                let parts: Vec<String> = args.iter().map(Self::format_expr_value).collect();
+                let parts: Vec<String> = args.iter().map(|arg| Self::format_expr_value(arg, received_signal)).collect();
                 println!("{}", parts.join(" "));
             } else if verbose {
-                let parts: Vec<String> = args.iter().map(Self::format_expr_value).collect();
+                let parts: Vec<String> = args.iter().map(|arg| Self::format_expr_value(arg, received_signal)).collect();
                 println!("  [Core #{} Function Call]: {}({})", core_id, name, parts.join(", "));
             }
         }
     }
 
-    fn format_expr_value(expr: &Expr) -> String {
+    fn format_expr_value(expr: &Expr, received_signal: Option<&ReceivedSignal>) -> String {
         match expr {
             Expr::StringLiteral(s) => s.clone(),
             Expr::IntLiteral(n) => n.to_string(),
             Expr::Variable(v) => v.clone(),
             Expr::BinaryOp { op, left, right } => {
-                format!("{} {} {}", Self::format_expr_value(left), op, Self::format_expr_value(right))
+                format!("{} {} {}", Self::format_expr_value(left, received_signal), op, Self::format_expr_value(right, received_signal))
             }
             Expr::MemberAccess { target, field } => {
-                format!("{}.{}", Self::format_expr_value(target), field)
+                if matches!(target.as_ref(), Expr::ReceiveSignal) {
+                    match field.as_str() {
+                        "value" => received_signal.and_then(|signal| signal.value.clone()).unwrap_or_else(|| "None".to_string()),
+                        "pending" => received_signal.map(|signal| signal.pending.to_string()).unwrap_or_else(|| "0".to_string()),
+                        _ => format!("receive.{}", field),
+                    }
+                } else { format!("{}.{}", Self::format_expr_value(target, received_signal), field) }
             }
             Expr::RefCreate(inner) => {
-                format!("ref {}", Self::format_expr_value(inner))
+                format!("ref {}", Self::format_expr_value(inner, received_signal))
             }
             Expr::FunctionCall { name, args } => {
-                let parts: Vec<String> = args.iter().map(Self::format_expr_value).collect();
+                let parts: Vec<String> = args.iter().map(|arg| Self::format_expr_value(arg, received_signal)).collect();
                 format!("{}({})", name, parts.join(", "))
             }
+            Expr::ReceiveSignal => received_signal.and_then(|signal| signal.value.clone()).unwrap_or_else(|| "None".to_string()),
         }
     }
 
-    fn format_expr(expr: &Expr) -> String {
+    fn format_expr(expr: &Expr, received_signal: Option<&ReceivedSignal>) -> String {
         match expr {
             Expr::StringLiteral(s) => format!("\"{}\"", s),
             Expr::IntLiteral(n) => n.to_string(),
             Expr::Variable(v) => v.clone(),
             Expr::BinaryOp { op, left, right } => {
-                format!("({} {} {})", Self::format_expr(left), op, Self::format_expr(right))
+                format!("({} {} {})", Self::format_expr(left, received_signal), op, Self::format_expr(right, received_signal))
             }
             Expr::MemberAccess { target, field } => {
-                format!("{}.{}", Self::format_expr(target), field)
+                format!("{}.{}", Self::format_expr(target, received_signal), field)
             }
             Expr::RefCreate(inner) => {
-                format!("ref {}", Self::format_expr(inner))
+                format!("ref {}", Self::format_expr(inner, received_signal))
             }
             Expr::FunctionCall { name, args } => {
-                let parts: Vec<String> = args.iter().map(Self::format_expr).collect();
+                let parts: Vec<String> = args.iter().map(|arg| Self::format_expr(arg, received_signal)).collect();
                 format!("{}({})", name, parts.join(", "))
             }
+            Expr::ReceiveSignal => "receive".to_string(),
         }
     }
 }

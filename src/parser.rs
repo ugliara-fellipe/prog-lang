@@ -18,15 +18,22 @@ pub enum TokenKind {
     Type,
     Func,
     Routine,
+    Loop,
     Import,
     Let,
     Mut,
     Spawn,
+    Signal,
+    Try,
+    Catch,
+    Throw,
+    Terminate,
     For,
     Em,
     In,
     Match,
     Ref,
+    Receive,
     List,
     // Symbols
     LParen,
@@ -149,15 +156,22 @@ impl<'a> Lexer<'a> {
                 "type" => TokenKind::Type,
                 "func" => TokenKind::Func,
                 "routine" => TokenKind::Routine,
+                "loop" => TokenKind::Loop,
                 "import" => TokenKind::Import,
                 "let" => TokenKind::Let,
                 "mut" => TokenKind::Mut,
                 "spawn" => TokenKind::Spawn,
+                "signal" => TokenKind::Signal,
+                "try" => TokenKind::Try,
+                "catch" => TokenKind::Catch,
+                "throw" => TokenKind::Throw,
+                "terminate" => TokenKind::Terminate,
                 "for" => TokenKind::For,
                 "in" => TokenKind::In,
                 "em" => TokenKind::Em,
                 "match" => TokenKind::Match,
                 "ref" => TokenKind::Ref,
+                "receive" => TokenKind::Receive,
                 "List" => TokenKind::List,
                 _ => TokenKind::Id(ident),
             };
@@ -464,11 +478,12 @@ impl<'a> Parser<'a> {
             TokenKind::Type => self.parse_type_decl().map(TopLevelDecl::Type),
             TokenKind::Func => self.parse_func_decl().map(TopLevelDecl::Func),
             TokenKind::Routine => self.parse_routine_decl().map(TopLevelDecl::Routine),
+            TokenKind::Loop => self.parse_loop_decl().map(TopLevelDecl::Loop),
             ref other => Err(ParseError::SyntaxError {
                 line: self.current.line,
                 col: self.current.col,
                 message: format!(
-                    "Unexpected top-level declaration: expected 'import', 'type', 'func', or 'routine', found {:?}",
+                    "Unexpected top-level declaration: expected 'import', 'type', 'func', 'routine', or 'loop', found {:?}",
                     other
                 ),
             }),
@@ -582,6 +597,22 @@ impl<'a> Parser<'a> {
         Ok(RoutineDecl { name, params, body })
     }
 
+    fn parse_loop_decl(&mut self) -> Result<LoopDecl, ParseError> {
+        self.expect(TokenKind::Loop)?;
+        let name = self.expect_id()?;
+        self.expect(TokenKind::LParen)?;
+        if !self.check(&TokenKind::RParen) {
+            return Err(ParseError::SyntaxError {
+                line: self.current.line,
+                col: self.current.col,
+                message: "Loops cannot declare parameters; use `receive` for signal values".to_string(),
+            });
+        }
+        self.expect(TokenKind::RParen)?;
+        let body = self.parse_block()?;
+        Ok(LoopDecl { name, body })
+    }
+
     fn parse_type_spec(&mut self) -> Result<TypeSpec, ParseError> {
         let mut name = self.expect_id()?;
         if self.check(&TokenKind::Dot) {
@@ -625,6 +656,13 @@ impl<'a> Parser<'a> {
         match self.current.kind {
             TokenKind::Let => self.parse_var_decl(),
             TokenKind::Spawn => self.parse_spawn(),
+            TokenKind::Signal => self.parse_signal(),
+            TokenKind::Throw => self.parse_throw(),
+            TokenKind::Try => self.parse_try_catch(),
+            TokenKind::Terminate => {
+                self.advance()?;
+                Ok(Statement::Terminate)
+            }
             TokenKind::For => self.parse_for(),
             TokenKind::Match => self.parse_match(),
             _ => {
@@ -666,6 +704,29 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Spawn)?;
         let expr = self.parse_expr()?;
         Ok(Statement::Spawn(expr))
+    }
+
+    fn parse_signal(&mut self) -> Result<Statement, ParseError> {
+        self.expect(TokenKind::Signal)?;
+        let loop_name = self.expect_id()?;
+        self.expect(TokenKind::LParen)?;
+        let payload = self.parse_expr()?;
+        self.expect(TokenKind::RParen)?;
+        Ok(Statement::Signal { loop_name, payload })
+    }
+
+    fn parse_throw(&mut self) -> Result<Statement, ParseError> {
+        self.expect(TokenKind::Throw)?;
+        Ok(Statement::Throw(self.parse_expr()?))
+    }
+
+    fn parse_try_catch(&mut self) -> Result<Statement, ParseError> {
+        self.expect(TokenKind::Try)?;
+        let try_body = self.parse_block()?;
+        self.expect(TokenKind::Catch)?;
+        let error_name = self.expect_id()?;
+        let catch_body = self.parse_block()?;
+        Ok(Statement::TryCatch { try_body, error_name, catch_body })
     }
 
     fn parse_for(&mut self) -> Result<Statement, ParseError> {
@@ -903,6 +964,10 @@ impl<'a> Parser<'a> {
             TokenKind::List => {
                 self.advance()?;
                 Ok(Expr::Variable("List".to_string()))
+            }
+            TokenKind::Receive => {
+                self.advance()?;
+                Ok(Expr::ReceiveSignal)
             }
             TokenKind::LParen => {
                 self.advance()?;

@@ -25,4 +25,22 @@ pub enum SemanticError {
 
     #[error("Undeclared symbol: {0}")]
     UndeclaredSymbol(String),
+
+    #[error("'terminate' may only be used inside a loop")]
+    TerminateOutsideLoop,
+
+    #[error("'receive' may only be used inside a loop")]
+    ReceiveOutsideLoop,
+
+    #[error("Duplicate loop declaration: '{0}'")]
+    DuplicateLoopName(String),
+
+    #[error("Signal target is not a declared loop: '{0}'")]
+    UnknownLoopSignal(String),
+
+    #[error("Spawn to loop '{loop_name}' accepts at most one signal value, found {found}")]
+    LoopSignalArgumentCount { loop_name: String, found: usize },
+
+    #[error("Only functions may throw exceptions")]
+    ThrowOutsideFunction,
 }

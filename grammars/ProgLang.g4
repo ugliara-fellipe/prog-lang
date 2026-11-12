@@ -20,6 +20,7 @@ topLevelDecl
     : typeDecl
     | funcDecl
     | routineDecl
+    | loopDecl
     ;
 
 typeDecl
@@ -36,6 +37,10 @@ funcDecl
 
 routineDecl
     : 'routine' ID '(' routineParamList? ')' block
+    ;
+
+loopDecl
+    : 'loop' ID '(' ')' block
     ;
 
 routineParamList
@@ -87,6 +92,10 @@ block
 statement
     : varDeclStmt
     | spawnStmt
+    | signalStmt
+    | throwStmt
+    | tryCatchStmt
+    | terminateStmt
     | forStmt
     | matchStmt
     | exprStmt
@@ -98,6 +107,22 @@ varDeclStmt
 
 spawnStmt
     : 'spawn' expr
+    ;
+
+signalStmt
+    : 'signal' ID '(' expr ')'
+    ;
+
+throwStmt
+    : 'throw' expr
+    ;
+
+tryCatchStmt
+    : 'try' block 'catch' ID block
+    ;
+
+terminateStmt
+    : 'terminate'
     ;
 
 forStmt
@@ -122,6 +147,7 @@ exprStmt
 
 expr
     : primary                                              # PrimaryExpr
+    | 'receive'                                            # ReceiveExpr
     | 'ref' expr                                           # RefExpr
     | expr '(' argList? ')'                                # CallExpr
     | expr '.' ID                                          # MemberAccessExpr
@@ -157,10 +183,17 @@ LET_KW     : 'let' ;
 MUT_KW     : 'mut' ;
 IMPORT_KW  : 'import' ;
 SPAWN_KW   : 'spawn' ;
+SIGNAL_KW  : 'signal' ;
+TRY_KW     : 'try' ;
+CATCH_KW   : 'catch' ;
+THROW_KW   : 'throw' ;
+LOOP_KW    : 'loop' ;
+TERMINATE_KW : 'terminate' ;
 FOR_KW     : 'for' ;
 IN_KW      : 'in' ;
 MATCH_KW   : 'match' ;
 REF_KW     : 'ref' ;
+RECEIVE_KW : 'receive' ;
 LIST_KW    : 'List' ;
 
 ID         : [a-zA-Z_] [a-zA-Z0-9_]* ;
