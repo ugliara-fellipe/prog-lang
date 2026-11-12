@@ -1,24 +1,14 @@
-# ---- Rust ----
+# Rust build artifacts
 /target/
-Cargo.lock
+/Cargo.lock
 
-# Incremental compilation artifacts
-**/*.rs.bk
-
-# Debug and profiling output
-*.pdb
-
-# ---- ProgLang compiled artifacts ----
+# ProgLang compiled artifacts
 *.progc
-*.prolang.out
 
-# ---- Editor / OS ----
-.DS_Store
+# Editor swap files
+*~
+*.swp
+
+# IDE specific
 .idea/
 .vscode/
-*.swp
-*.swo
-*~
-
-# ---- Logs ----
-*.log

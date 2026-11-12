@@ -17,6 +17,6 @@ document.querySelectorAll('[data-copy]').forEach((button) => button.addEventList
   if (!source) return;
   await navigator.clipboard.writeText(source.textContent.trim());
   const original = button.textContent;
-  button.textContent = 'Copied';
+  button.textContent = 'Copiado';
   setTimeout(() => { button.textContent = original; }, 1600);
 }));

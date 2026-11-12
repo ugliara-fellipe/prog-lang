@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Guia prático da linguagem Lia: sintaxe, compilador, rotinas, loops, bibliotecas e execução.">
+    <title>Guia de Lia — aprenda a programar</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Ir para o conteúdo</a>
+    <header class="site-header">
+      <a class="brand" href="index.html" aria-label="Página inicial de Lia">
+        <span class="brand-mark" aria-hidden="true">λ</span><span>Lia</span>
+      </a>
+      <nav aria-label="Navegação principal">
+        <a href="index.html#language">Linguagem</a>
+        <a href="index.html#loops">Loops</a>
+        <a href="index.html#analysis">Análise</a>
+        <a href="guia.html" aria-current="page">Guia</a>
+        <a class="github-link" href="https://github.com/ugliara-fellipe/prog-lang" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+
+    <main id="content">
+      <section class="guide-hero section-shell">
+        <p class="eyebrow">Guia prático</p>
+        <h1>Escreva programas Lia que deixam claro <em>quando</em> e <em>por que</em> terminam.</h1>
+        <p class="lede">Lia separa cálculo, concorrência e repetição persistente em três construções: <code>func</code>, <code>routine</code> e <code>loop</code>. Este guia mostra como combiná-las, como o compilador as verifica e como o runtime as agenda.</p>
+      </section>
+
+      <div class="guide-layout section-shell">
+        <aside class="guide-nav" aria-label="Índice do guia">
+          <a href="#comece">1. Comece</a>
+          <a href="#modelo">2. Modelo mental</a>
+          <a href="#funcoes">3. Funções</a>
+          <a href="#rotinas">4. Rotinas e main</a>
+          <a href="#loops">5. Loops e sinais</a>
+          <a href="#bibliotecas">6. Bibliotecas</a>
+          <a href="#compilador">7. Compilador e análise</a>
+          <a href="#execucao">8. Execução e interrupção</a>
+        </aside>
+
+        <article class="guide-content">
+          <section class="lesson" id="comece">
+            <p class="eyebrow">1 · Comece</p>
+            <h2>Execute um arquivo <code>.lia</code>.</h2>
+            <p>O repositório contém programas executáveis e bibliotecas. Um executável tem exatamente uma rotina chamada <code>main</code>; sem ela, o arquivo é uma biblioteca que apenas declara tipos, funções, rotinas ou loops para importação.</p>
+            <div class="command-list" aria-label="Comandos iniciais">
+              <div><code>cargo test</code><button class="copy-button" type="button" data-copy="#command-test">Copiar</button><span id="command-test" hidden>cargo test</span></div>
+              <div><code>cargo run -- programs/00_hello_world.lia</code><button class="copy-button" type="button" data-copy="#command-hello">Copiar</button><span id="command-hello" hidden>cargo run -- programs/00_hello_world.lia</span></div>
+              <div><code>cargo run -- --test-all</code><button class="copy-button" type="button" data-copy="#command-all">Copiar</button><span id="command-all" hidden>cargo run -- --test-all</span></div>
+            </div>
+            <figure class="guide-code">
+              <figcaption>hello.lia</figcaption>
+              <pre><code><span class="code-keyword">import</span> std
+
+<span class="code-keyword">routine</span> <span class="code-name">main</span>() {
+  std.log(<span class="code-string">"Olá, Lia!"</span>)
+}</code></pre>
+            </figure>
+            <div class="note"><strong>Regra de entrada:</strong> chamar um arquivo inicia somente <code>main</code>. O processo termina quando não há mais rotinas, funções ou loops ativos.</div>
+          </section>
+
+          <section class="lesson" id="modelo">
+            <p class="eyebrow">2 · Modelo mental</p>
+            <h2>Escolha a construção pelo efeito que você precisa.</h2>
+            <div class="concept-grid">
+              <article><h3><code>func</code></h3><p>Calcula e retorna um valor. Pode chamar outras funções e usar recursão estrutural. É a única construção com retorno.</p></article>
+              <article><h3><code>routine</code></h3><p>Executa trabalho isolado. Não retorna valor; use <code>spawn</code> para iniciá-la concorrentemente.</p></article>
+              <article><h3><code>loop</code></h3><p>É um ator persistente com caixa postal FIFO. Não recebe parâmetros na declaração e não retorna valor.</p></article>
+              <article><h3><code>std</code></h3><p>Biblioteca padrão explícita. Importar <code>std</code> libera primitivas finitas como <code>std.log</code>, <code>std.max</code> e <code>std.prepend</code>.</p></article>
+            </div>
+          </section>
+
+          <section class="lesson" id="funcoes">
+            <p class="eyebrow">3 · Funções</p>
+            <h2>Retorne valores e diminua a entrada recursiva.</h2>
+            <p>O compilador aceita recursão direta quando consegue ver que o argumento indutivo diminui. Em uma lista, o padrão <code>Cons(head, tail)</code> torna <code>tail</code> menor que a lista original.</p>
+            <figure class="guide-code">
+              <figcaption>Somar uma lista: cada chamada recebe <code>tail</code></figcaption>
+              <pre><code><span class="code-keyword">func</span> <span class="code-name">sum</span>(items: List[Int]) -&gt; Int {
+  <span class="code-keyword">match</span> items {
+    Nil =&gt; 0,
+    Cons(head, tail) =&gt; head + sum(tail)
+  }
+}</code></pre>
+            </figure>
+            <p>Use <code>match</code> para tratar cada forma possível de um valor. O caso <code>Nil</code> cria a base; o caso <code>Cons</code> reduz a estrutura. Um ciclo mútuo como <code>a → b → a</code> é rejeitado pelo verificador do grafo de chamadas.</p>
+            <div class="note"><strong>Importante:</strong> uma função pode lançar uma exceção com <code>throw</code>. Rotinas e loops podem usar <code>try/catch</code>, mas não lançam exceções diretamente.</div>
+          </section>
+
+          <section class="lesson" id="rotinas">
+            <p class="eyebrow">4 · Rotinas e main</p>
+            <h2>Agende trabalho sem compartilhar referências mutáveis.</h2>
+            <p>Uma rotina é uma tarefa isolada. <code>spawn</code> cria trabalho independente; dados passados na chamada precisam ser copiáveis. <code>Ref[T]</code> permanece confinado à arena da rotina que o criou.</p>
+            <figure class="guide-code">
+              <figcaption>Uma entrada inicia uma rotina auxiliar</figcaption>
+              <pre><code><span class="code-keyword">import</span> std
+
+<span class="code-keyword">routine</span> <span class="code-name">main</span>() {
+  <span class="code-keyword">spawn</span> Worker()
+}
+
+<span class="code-keyword">routine</span> <span class="code-name">Worker</span>() {
+  std.log(<span class="code-string">"trabalho concluído"</span>)
+}</code></pre>
+            </figure>
+            <p>Cada rotina recebe uma arena local. Quando seu corpo termina, a arena inteira é descartada de uma vez; nenhuma referência local pode escapar para outra tarefa.</p>
+          </section>
+
+          <section class="lesson" id="loops">
+            <p class="eyebrow">5 · Loops e sinais</p>
+            <h2>Use loops para trabalho persistente, não para <code>while</code>.</h2>
+            <p>Não existe <code>while</code> em Lia. Um <code>loop</code> fica dormente até receber <code>spawn NomeDoLoop()</code>. Se ele já estiver ativo, outro <code>spawn NomeDoLoop(valor)</code> envia um sinal para sua fila em vez de criar uma segunda instância.</p>
+            <figure class="guide-code">
+              <figcaption>Uma mensagem para a caixa postal de um loop</figcaption>
+              <pre><code><span class="code-keyword">import</span> std
+
+<span class="code-keyword">routine</span> <span class="code-name">main</span>() {
+  <span class="code-keyword">spawn</span> Inbox(<span class="code-string">"processar relatório"</span>)
+}
+
+<span class="code-keyword">loop</span> <span class="code-name">Inbox</span>() {
+  std.log(<span class="code-string">"recebido:"</span>, receive.value)
+  std.log(<span class="code-string">"ainda na fila:"</span>, receive.pending)
+  <span class="code-keyword">terminate</span>
+}</code></pre>
+            </figure>
+            <ul class="check-list">
+              <li><span>✓</span><code>receive.value</code> contém o sinal entregue nesta iteração, ou <code>None</code> quando não há sinal.</li>
+              <li><span>✓</span><code>receive.pending</code> informa quantos sinais permanecem na fila após a entrega.</li>
+              <li><span>✓</span>Sem <code>terminate</code>, o loop agenda a próxima iteração depois de concluir a atual.</li>
+            </ul>
+          </section>
+
+          <section class="lesson" id="bibliotecas">
+            <p class="eyebrow">6 · Bibliotecas</p>
+            <h2>Todo acesso ao runtime é declarado no fonte.</h2>
+            <p>A biblioteca padrão não é implícita: importe <code>std</code> para usar suas primitivas. Ela contém somente operações certificadas como finitas sobre valores materializados, incluindo <code>std.equals</code>, <code>std.less_or_equal</code>, <code>std.max</code>, <code>std.empty</code>, <code>std.prepend</code> e <code>std.log</code>.</p>
+            <figure class="guide-code">
+              <figcaption>Importar biblioteca padrão e um arquivo de biblioteca</figcaption>
+              <pre><code><span class="code-keyword">import</span> std
+<span class="code-keyword">import</span> <span class="code-string">"03_structural_recursion"</span>
+
+<span class="code-keyword">routine</span> <span class="code-name">main</span>() {
+  std.log(<span class="code-string">"soma:"</span>, sum_list([4, 5, 6]))
+}</code></pre>
+            </figure>
+            <p>Arquivos cujo nome começa com número usam aspas no <code>import</code>. Uma biblioteca sem <code>main</code> não inicia trabalho ao ser carregada: ela apenas disponibiliza suas declarações.</p>
+          </section>
+
+          <section class="lesson" id="compilador">
+            <p class="eyebrow">7 · Compilador e análise</p>
+            <h2>Valide antes de executar; pergunte pelo custo quando precisar.</h2>
+            <p>O compilador analisa imports, constrói o grafo de chamadas, verifica tipos e confinamento de referências, prova redução estrutural e estima o pior caso de cada declaração. A análise de um loop descreve uma única iteração.</p>
+            <div class="command-list" aria-label="Comandos de compilação e análise">
+              <div><code>cargo run -- complexity programs/11_search_and_sort.lia func insertion_sort</code><button class="copy-button" type="button" data-copy="#command-complexity">Copiar</button><span id="command-complexity" hidden>cargo run -- complexity programs/11_search_and_sort.lia func insertion_sort</span></div>
+              <div><code>cargo run -- compile programs/11_search_and_sort.lia -o search.liac</code><button class="copy-button" type="button" data-copy="#command-compile">Copiar</button><span id="command-compile" hidden>cargo run -- compile programs/11_search_and_sort.lia -o search.liac</span></div>
+              <div><code>cargo run -- run search.liac</code><button class="copy-button" type="button" data-copy="#command-run">Copiar</button><span id="command-run" hidden>cargo run -- run search.liac</span></div>
+            </div>
+            <div class="note"><strong>Exemplo real:</strong> o compilador reconhece <code>linear_search</code> e <code>insert_sorted</code> como <code>O(N)</code>; como <code>insertion_sort</code> chama uma inserção linear para cada elemento, seu pior caso é <code>O(N²)</code>.</div>
+          </section>
+
+          <section class="lesson" id="execucao">
+            <p class="eyebrow">8 · Execução e interrupção</p>
+            <h2>O runtime só trabalha enquanto houver tarefas pendentes.</h2>
+            <p>Depois que <code>main</code> é iniciada, o runtime espera as rotinas disparadas e os loops ativos terminarem. Uma rotina comum libera sua tarefa quando o corpo termina. Um loop mantém uma única instância ativa e usa sua caixa postal FIFO para a próxima iteração.</p>
+            <p>Se o usuário emitir <kbd>Ctrl</kbd> + <kbd>C</kbd>, o runtime encerra as rotinas e loops ativos, descarta sinais pendentes e impede novos re-agendamentos.</p>
+            <div class="guide-next">
+              <p class="eyebrow">Próximo passo</p>
+              <h2>Leia e execute os exemplos.</h2>
+              <p>Comece com o hello world, depois explore sinais e, por fim, os algoritmos recursivos.</p>
+              <a href="index.html#quickstart">Voltar aos comandos rápidos →</a>
+            </div>
+          </section>
+        </article>
+      </div>
+    </main>
+
+    <footer>
+      <p>Lia é uma implementação de referência open source.</p>
+      <a href="index.html">Página inicial</a>
+    </footer>
+    <script src="app.js"></script>
+  </body>
+</html>
