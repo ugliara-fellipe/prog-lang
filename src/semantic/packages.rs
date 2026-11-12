@@ -242,16 +242,10 @@ impl PackageManager {
                 pkg_name
             )));
         }
-        // Look for:
-        // 1. base_dir / <pkg_name>.proglang
-        // 2. base_dir / <pkg_name>.prolang
-        // 3. base_dir / <pkg_name> / mod.proglang
-        // 4. base_dir / <pkg_name> / mod.prolang
+        // Look for a flat package file first, then a module file.
         let candidates = [
-            self.base_dir.join(format!("{}.proglang", pkg_name)),
-            self.base_dir.join(format!("{}.prolang", pkg_name)),
-            self.base_dir.join(pkg_name).join("mod.proglang"),
-            self.base_dir.join(pkg_name).join("mod.prolang"),
+            self.base_dir.join(format!("{}.lia", pkg_name)),
+            self.base_dir.join(pkg_name).join("mod.lia"),
         ];
 
         for path in &candidates {

@@ -1,6 +1,6 @@
 // ============================================================
 import std
-// invalid_03_spawn_with_ref.proglang
+// invalid_03_spawn_with_ref.lia
 // Negative Test: Memory Confinement and References (Ref[T])
 //
 // Expected: The compiler MUST reject this program with error

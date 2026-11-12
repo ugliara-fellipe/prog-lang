@@ -1,5 +1,5 @@
 // ============================================================
-// 01_structs_and_functions.proglang
+// 01_structs_and_functions.lia
 // Feature Coverage:
 // - Pure data struct definition ('type')
 // - Pure side-effect-free functions ('func')

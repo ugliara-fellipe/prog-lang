@@ -1,6 +1,6 @@
 // ============================================================
 import std
-// 05_arenas_and_local_refs.proglang
+// 05_arenas_and_local_refs.lia
 // Feature Coverage:
 // - Per-routine Arena-based memory management
 // - Confinement of mutable pointers via 'Ref[T]' and 'ref expr'

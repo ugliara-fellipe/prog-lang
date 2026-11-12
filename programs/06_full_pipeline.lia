@@ -1,6 +1,6 @@
 // ============================================================
 import std
-// 06_full_pipeline.proglang
+// 06_full_pipeline.lia
 // Feature Coverage (Full Integration):
 // - Structured inductive data types
 // - Pure functions with structurally proved termination

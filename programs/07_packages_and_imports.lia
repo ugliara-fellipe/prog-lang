@@ -1,4 +1,4 @@
-// Demonstrates packages and imports in ProgLang
+// Demonstrates packages and imports in Lia
 import math
 import math.{Vector2D, multiply}
 import std

@@ -3,16 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="ProgLang: finite functions and routines, persistent signal-driven loops, and static complexity analysis.">
-    <title>ProgLang — predictable concurrent programs</title>
+    <meta name="description" content="Lia: finite functions and routines, persistent signal-driven loops, and static complexity analysis.">
+    <title>Lia — predictable concurrent programs</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <a class="skip-link" href="#content">Skip to content</a>
     <header class="site-header">
-      <a class="brand" href="#top" aria-label="ProgLang home">
+      <a class="brand" href="#top" aria-label="Lia home">
         <span class="brand-mark" aria-hidden="true">λ</span>
-        <span>ProgLang</span>
+        <span>Lia</span>
       </a>
       <nav aria-label="Primary navigation">
         <a href="#language">Language</a>
@@ -27,14 +27,14 @@
         <div class="hero-copy">
           <p class="eyebrow">A reference compiler and runtime in Rust</p>
           <h1>Concurrent programs with <em>visible</em> lifecycles.</h1>
-          <p class="lede">ProgLang combines finite functions and routines with persistent, signal-driven loops. The compiler verifies termination boundaries and reports worst-case complexity before work reaches the runtime.</p>
+          <p class="lede">Lia combines finite functions and routines with persistent, signal-driven loops. The compiler verifies termination boundaries and reports worst-case complexity before work reaches the runtime.</p>
           <div class="hero-actions">
             <a class="button button-primary" href="https://github.com/ugliara-fellipe/prog-lang" target="_blank" rel="noreferrer">Explore the repository <span aria-hidden="true">→</span></a>
             <a class="button button-quiet" href="#quickstart">Try the commands</a>
           </div>
         </div>
-        <div class="hero-panel terminal" aria-label="ProgLang program example">
-          <div class="terminal-bar"><span></span><span></span><span></span><code>main.proglang</code></div>
+        <div class="hero-panel terminal" aria-label="Lia program example">
+          <div class="terminal-bar"><span></span><span></span><span></span><code>main.lia</code></div>
           <pre><code><span class="code-keyword">import</span> std
 
 <span class="code-keyword">routine</span> <span class="code-name">main</span>() {
@@ -138,7 +138,7 @@ receive.pending <span class="code-comment">// 0</span></code></pre>
             <p class="eyebrow">Static analysis</p>
             <h2>Ask the compiler for one declaration’s cost.</h2>
             <p>The analyzer validates the source first, then reports the worst-case class for functions, routines, or one loop iteration.</p>
-            <div class="command-box"><code id="command-text">cargo run -- complexity programs/11_search_and_sort.proglang func insertion_sort</code><button class="copy-button" type="button" data-copy="#command-text">Copy</button></div>
+            <div class="command-box"><code id="command-text">cargo run -- complexity programs/11_search_and_sort.lia func insertion_sort</code><button class="copy-button" type="button" data-copy="#command-text">Copy</button></div>
           </div>
           <div class="complexity-table" role="table" aria-label="Algorithm complexity examples">
             <div role="row" class="table-head"><span role="columnheader">Algorithm</span><span role="columnheader">Worst case</span></div>
@@ -154,14 +154,14 @@ receive.pending <span class="code-comment">// 0</span></code></pre>
         <div><p class="eyebrow">Quick start</p><h2>Build, run, inspect.</h2></div>
         <ol>
           <li><code>cargo test</code><span>Run the language and runtime suite.</span></li>
-          <li><code>cargo run -- programs/11_search_and_sort.proglang</code><span>Execute the algorithm fixture.</span></li>
-          <li><code>cargo run -- complexity programs/11_search_and_sort.proglang func insertion_sort</code><span>Inspect a declaration’s complexity.</span></li>
+          <li><code>cargo run -- programs/11_search_and_sort.lia</code><span>Execute the algorithm fixture.</span></li>
+          <li><code>cargo run -- complexity programs/11_search_and_sort.lia func insertion_sort</code><span>Inspect a declaration’s complexity.</span></li>
         </ol>
       </section>
     </main>
 
     <footer>
-      <p>ProgLang is an open-source reference implementation.</p>
+      <p>Lia is an open-source reference implementation.</p>
       <a href="https://github.com/ugliara-fellipe/prog-lang" target="_blank" rel="noreferrer">github.com/ugliara-fellipe/prog-lang <span aria-hidden="true">↗</span></a>
     </footer>
     <script src="app.js"></script>

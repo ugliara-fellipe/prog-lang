@@ -1,10 +1,10 @@
 // ============================================================
-// invalid_04_while_loop_prohibited.proglang
+// invalid_04_while_loop_prohibited.lia
 // Negative Test: Absence of Unbounded Loops ('while')
 //
 // Expected: The compiler MUST reject with a syntax error (ParseError).
 //
-// Rule: In ProgLang, the keyword 'while' is intentionally excluded
+// Rule: In Lia, the keyword 'while' is intentionally excluded
 // from the grammar. Only bounded 'for x in collection' loops are
 // permitted to ensure guaranteed finite termination.
 // ============================================================

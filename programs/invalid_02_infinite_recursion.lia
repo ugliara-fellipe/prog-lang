@@ -1,5 +1,5 @@
 // ============================================================
-// invalid_02_infinite_recursion.proglang
+// invalid_02_infinite_recursion.lia
 // Negative Test: Structural Decrement (Induction) Verification
 //
 // Expected: The compiler MUST reject this program with error

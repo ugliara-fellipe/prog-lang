@@ -1,7 +1,7 @@
 // ============================================================
 import std
-// 00_hello_world.proglang
-// Hello World Program in ProgLang
+// 00_hello_world.lia
+// Hello World Program in Lia
 //
 // Features demonstrated:
 // - Pure function returning String

@@ -1,14 +1,14 @@
-use proglang::parser::{Parser, ParseError};
-use proglang::semantic::dag::CallGraphValidator;
-use proglang::semantic::type_checker::TypeChecker;
-use proglang::semantic::termination::TerminationChecker;
-use proglang::semantic::SemanticError;
+use lia::parser::{Parser, ParseError};
+use lia::semantic::dag::CallGraphValidator;
+use lia::semantic::type_checker::TypeChecker;
+use lia::semantic::termination::TerminationChecker;
+use lia::semantic::SemanticError;
 use std::process::Command;
 
 fn compile_and_validate(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut parser = Parser::new(source)?;
     let raw_program = parser.parse_program()?;
-    let mut packages = proglang::semantic::packages::PackageManager::new("programs");
+    let mut packages = lia::semantic::packages::PackageManager::new("programs");
     let program = packages.resolve_program(raw_program)?;
 
     let mut dag_validator = CallGraphValidator::new();
@@ -24,53 +24,53 @@ fn compile_and_validate(source: &str) -> Result<(), Box<dyn std::error::Error>> 
 
 #[test]
 fn test_program_00_hello_world() {
-    let code = include_str!("../programs/00_hello_world.proglang");
+    let code = include_str!("../programs/00_hello_world.lia");
     assert!(compile_and_validate(code).is_ok());
 }
 
 #[test]
 fn test_program_01_structs_and_functions() {
-    let code = include_str!("../programs/01_structs_and_functions.proglang");
+    let code = include_str!("../programs/01_structs_and_functions.lia");
     assert!(compile_and_validate(code).is_ok());
 }
 
 #[test]
 fn test_program_02_bounded_loops() {
-    let code = include_str!("../programs/02_bounded_loops.proglang");
+    let code = include_str!("../programs/02_bounded_loops.lia");
     assert!(compile_and_validate(code).is_ok());
 }
 
 #[test]
 fn test_program_03_structural_recursion() {
-    let code = include_str!("../programs/03_structural_recursion.proglang");
+    let code = include_str!("../programs/03_structural_recursion.lia");
     assert!(compile_and_validate(code).is_ok());
 }
 
 #[test]
 fn test_program_04_actors_concurrency_spawn() {
-    let code = include_str!("../programs/04_actors_concurrency_spawn.proglang");
+    let code = include_str!("../programs/04_actors_concurrency_spawn.lia");
     assert!(compile_and_validate(code).is_ok());
 }
 
 #[test]
 fn test_program_05_arenas_and_local_refs() {
-    let code = include_str!("../programs/05_arenas_and_local_refs.proglang");
+    let code = include_str!("../programs/05_arenas_and_local_refs.lia");
     assert!(compile_and_validate(code).is_ok());
 }
 
 #[test]
 fn test_program_06_full_pipeline() {
-    let code = include_str!("../programs/06_full_pipeline.proglang");
+    let code = include_str!("../programs/06_full_pipeline.lia");
     assert!(compile_and_validate(code).is_ok());
 }
 
 #[test]
 fn test_program_07_packages_and_imports() {
-    let code = include_str!("../programs/07_packages_and_imports.proglang");
+    let code = include_str!("../programs/07_packages_and_imports.lia");
     let mut parser = Parser::new(code).expect("Parser should initialize");
     let raw_program = parser.parse_program().expect("Parse program");
 
-    let mut pkg_mgr = proglang::semantic::packages::PackageManager::new("programs");
+    let mut pkg_mgr = lia::semantic::packages::PackageManager::new("programs");
     let program = pkg_mgr.resolve_program(raw_program).expect("Resolve package imports");
 
     let mut dag_validator = CallGraphValidator::new();
@@ -84,28 +84,28 @@ fn test_program_07_packages_and_imports() {
 
 #[test]
 fn test_program_08_persistent_loop() {
-    let code = include_str!("../programs/08_persistent_loop.proglang");
+    let code = include_str!("../programs/08_persistent_loop.lia");
     assert!(compile_and_validate(code).is_ok());
 }
 
 #[test]
 fn test_program_09_loop_signals() {
-    let code = include_str!("../programs/09_loop_signals.proglang");
+    let code = include_str!("../programs/09_loop_signals.lia");
     assert!(compile_and_validate(code).is_ok());
 }
 
 #[test]
 fn test_program_10_exceptions() {
-    let code = include_str!("../programs/10_exceptions.proglang");
+    let code = include_str!("../programs/10_exceptions.lia");
     assert!(compile_and_validate(code).is_ok());
 }
 
 #[test]
 fn test_program_11_search_and_sort_match_literature_worst_case_complexities() {
-    let code = include_str!("../programs/11_search_and_sort.proglang");
+    let code = include_str!("../programs/11_search_and_sort.lia");
     let mut parser = Parser::new(code).unwrap();
     let raw_program = parser.parse_program().unwrap();
-    let mut packages = proglang::semantic::packages::PackageManager::new("programs");
+    let mut packages = lia::semantic::packages::PackageManager::new("programs");
     let program = packages.resolve_program(raw_program).unwrap();
 
     let mut dag_validator = CallGraphValidator::new();
@@ -114,7 +114,7 @@ fn test_program_11_search_and_sort_match_literature_worst_case_complexities() {
     assert!(type_checker.check_program(&program).is_ok());
     assert!(TerminationChecker::verify_program(&program).is_ok());
 
-    let entries = proglang::semantic::complexity::ComplexityAnalyzer::new().analyze(&program);
+    let entries = lia::semantic::complexity::ComplexityAnalyzer::new().analyze(&program);
     let complexities: std::collections::HashMap<_, _> = entries
         .into_iter()
         .map(|entry| (entry.name, entry.complexity.to_big_o()))
@@ -130,8 +130,8 @@ fn test_program_11_search_and_sort_match_literature_worst_case_complexities() {
 
 #[test]
 fn test_program_11_executes_search_and_sort_algorithms() {
-    let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
-        .arg("programs/11_search_and_sort.proglang")
+    let output = Command::new(env!("CARGO_BIN_EXE_lia"))
+        .arg("programs/11_search_and_sort.lia")
         .output()
         .expect("run algorithm fixture");
     assert!(output.status.success());
@@ -144,7 +144,7 @@ fn test_program_11_executes_search_and_sort_algorithms() {
 
 #[test]
 fn test_program_12_main_entry() {
-    let code = include_str!("../programs/12_main_entry.proglang");
+    let code = include_str!("../programs/12_main_entry.lia");
     assert!(compile_and_validate(code).is_ok());
 }
 
@@ -153,26 +153,26 @@ fn test_program_12_main_entry() {
 #[test]
 fn test_all_valid_programs_compile_as_programs_or_libraries() {
     let fixtures = [
-        "00_hello_world.proglang",
-        "01_structs_and_functions.proglang",
-        "02_bounded_loops.proglang",
-        "03_structural_recursion.proglang",
-        "04_actors_concurrency_spawn.proglang",
-        "05_arenas_and_local_refs.proglang",
-        "06_full_pipeline.proglang",
-        "07_packages_and_imports.proglang",
-        "08_persistent_loop.proglang",
-        "09_loop_signals.proglang",
-        "10_exceptions.proglang",
-        "11_search_and_sort.proglang",
-        "12_main_entry.proglang",
-        "13_library_consumer.proglang",
-        "math.proglang",
-        "std.proglang",
+        "00_hello_world.lia",
+        "01_structs_and_functions.lia",
+        "02_bounded_loops.lia",
+        "03_structural_recursion.lia",
+        "04_actors_concurrency_spawn.lia",
+        "05_arenas_and_local_refs.lia",
+        "06_full_pipeline.lia",
+        "07_packages_and_imports.lia",
+        "08_persistent_loop.lia",
+        "09_loop_signals.lia",
+        "10_exceptions.lia",
+        "11_search_and_sort.lia",
+        "12_main_entry.lia",
+        "13_library_consumer.lia",
+        "math.lia",
+        "std.lia",
     ];
 
     for fixture in fixtures {
-        let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
+        let output = Command::new(env!("CARGO_BIN_EXE_lia"))
             .arg(format!("programs/{fixture}"))
             .output()
             .expect("run valid fixture");
@@ -187,16 +187,16 @@ fn test_all_valid_programs_compile_as_programs_or_libraries() {
 #[test]
 fn test_executable_examples_dispatch_their_main_routines() {
     let fixtures = [
-        ("00_hello_world.proglang", "Hello, World!"),
-        ("07_packages_and_imports.proglang", "Sum via qualified import: 30"),
-        ("08_persistent_loop.proglang", "poller finished its finite iteration"),
-        ("09_loop_signals.proglang", "received: new work is available still pending: 0"),
-        ("10_exceptions.proglang", "starting exception monitor"),
-        ("13_library_consumer.proglang", "sum from imported library: 15"),
+        ("00_hello_world.lia", "Hello, World!"),
+        ("07_packages_and_imports.lia", "Sum via qualified import: 30"),
+        ("08_persistent_loop.lia", "poller finished its finite iteration"),
+        ("09_loop_signals.lia", "received: new work is available still pending: 0"),
+        ("10_exceptions.lia", "starting exception monitor"),
+        ("13_library_consumer.lia", "sum from imported library: 15"),
     ];
 
     for (fixture, expected_output) in fixtures {
-        let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
+        let output = Command::new(env!("CARGO_BIN_EXE_lia"))
             .arg(format!("programs/{fixture}"))
             .output()
             .expect("run executable fixture");
@@ -212,8 +212,8 @@ fn test_executable_examples_dispatch_their_main_routines() {
 /// and then exit without running unrelated routine declarations.
 #[test]
 fn test_main_is_the_only_automatic_runtime_entry_point() {
-    let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
-        .arg("programs/12_main_entry.proglang")
+    let output = Command::new(env!("CARGO_BIN_EXE_lia"))
+        .arg("programs/12_main_entry.lia")
         .output()
         .expect("run main-entry fixture");
     assert!(output.status.success());
@@ -227,8 +227,8 @@ fn test_main_is_the_only_automatic_runtime_entry_point() {
 /// validates it and exits without dispatching declarations as actor tasks.
 #[test]
 fn test_library_without_main_does_not_dispatch_runtime_work() {
-    let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
-        .arg("programs/03_structural_recursion.proglang")
+    let output = Command::new(env!("CARGO_BIN_EXE_lia"))
+        .arg("programs/03_structural_recursion.lia")
         .output()
         .expect("run library fixture");
     assert!(output.status.success());
@@ -237,8 +237,8 @@ fn test_library_without_main_does_not_dispatch_runtime_work() {
 
 #[test]
 fn test_complexity_cli_reports_requested_declaration() {
-    let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
-        .args(["complexity", "programs/11_search_and_sort.proglang", "func", "insertion_sort"])
+    let output = Command::new(env!("CARGO_BIN_EXE_lia"))
+        .args(["complexity", "programs/11_search_and_sort.lia", "func", "insertion_sort"])
         .output()
         .expect("run complexity CLI");
     assert!(output.status.success());
@@ -260,28 +260,28 @@ routine main() {
 
 #[test]
 fn test_std_package_contains_only_certified_terminating_primitives() {
-    let mut parser = Parser::new(include_str!("../programs/std.proglang"))
+    let mut parser = Parser::new(include_str!("../programs/std.lia"))
         .expect("Parser should initialize");
     let program = parser.parse_program().expect("Parse std package");
-    assert!(proglang::stdlib::validate_standard_library(&program).is_ok());
+    assert!(lia::stdlib::validate_standard_library(&program).is_ok());
 
     let declared: Vec<_> = program
         .declarations
         .iter()
         .filter_map(|declaration| match declaration {
-            proglang::ast::TopLevelDecl::Func(function) => Some(format!("std.{}", function.name)),
+            lia::ast::TopLevelDecl::Func(function) => Some(format!("std.{}", function.name)),
             _ => None,
         })
         .collect();
-    assert_eq!(declared.len(), proglang::stdlib::TOTAL_STANDARD_FUNCTIONS.len());
+    assert_eq!(declared.len(), lia::stdlib::TOTAL_STANDARD_FUNCTIONS.len());
     assert!(declared
         .iter()
-        .all(|name| proglang::stdlib::is_total_standard_function(name)));
+        .all(|name| lia::stdlib::is_total_standard_function(name)));
 }
 
 #[test]
 fn test_invalid_01_dag_cycle() {
-    let code = include_str!("../programs/invalid_01_dag_cycle.proglang");
+    let code = include_str!("../programs/invalid_01_dag_cycle.lia");
     let mut parser = Parser::new(code).expect("Parser should initialize");
     let program = parser.parse_program().expect("Syntax should be valid");
 
@@ -292,7 +292,7 @@ fn test_invalid_01_dag_cycle() {
 
 #[test]
 fn test_invalid_02_infinite_recursion() {
-    let code = include_str!("../programs/invalid_02_infinite_recursion.proglang");
+    let code = include_str!("../programs/invalid_02_infinite_recursion.lia");
     let mut parser = Parser::new(code).expect("Parser should initialize");
     let program = parser.parse_program().expect("Syntax should be valid");
 
@@ -302,7 +302,7 @@ fn test_invalid_02_infinite_recursion() {
 
 #[test]
 fn test_invalid_03_spawn_with_ref() {
-    let code = include_str!("../programs/invalid_03_spawn_with_ref.proglang");
+    let code = include_str!("../programs/invalid_03_spawn_with_ref.lia");
     let mut parser = Parser::new(code).expect("Parser should initialize");
     let err = parser.parse_program();
     assert!(
@@ -355,7 +355,7 @@ routine RoutineCallsRecursive(l: List[Int]) {
     let mut parser = Parser::new(code).expect("Parser should initialize");
     let program = parser.parse_program().expect("Parse program");
 
-    let mut analyzer = proglang::semantic::complexity::ComplexityAnalyzer::new();
+    let mut analyzer = lia::semantic::complexity::ComplexityAnalyzer::new();
     let entries = analyzer.analyze(&program);
 
     let map: std::collections::HashMap<String, String> = entries
@@ -395,7 +395,7 @@ routine RoutineB(x: Int) {
 
 #[test]
 fn test_invalid_04_while_loop_prohibited() {
-    let code = include_str!("../programs/invalid_04_while_loop_prohibited.proglang");
+    let code = include_str!("../programs/invalid_04_while_loop_prohibited.lia");
     let res = Parser::new(code).and_then(|mut p| p.parse_program());
     assert!(matches!(res, Err(ParseError::SyntaxError { .. })), "Expected SyntaxError for forbidden while loop, got {:?}", res);
 }
@@ -557,7 +557,7 @@ loop Poller() {
 
     let mut parser = Parser::new(code).unwrap();
     let program = parser.parse_program().unwrap();
-    let entries = proglang::semantic::complexity::ComplexityAnalyzer::new().analyze(&program);
+    let entries = lia::semantic::complexity::ComplexityAnalyzer::new().analyze(&program);
     assert!(entries.iter().any(|e| e.name == "Poller" && e.kind == "loop" && e.complexity.to_big_o() == "O(N)"));
 }
 
@@ -633,7 +633,7 @@ loop Inbox() {}
 
 #[test]
 fn test_signal_router_queues_without_waiting_and_drains_at_iteration_start() {
-    let router = proglang::runtime::actor::SignalRouter::default();
+    let router = lia::runtime::actor::SignalRouter::default();
     assert!(router.register_loop("Inbox", Vec::new()));
 
     assert!(router.emit("Inbox", "first".to_string()));
@@ -668,7 +668,7 @@ routine Sender() {
 
 #[test]
 fn test_signal_router_allows_only_one_active_instance_per_loop_name() {
-    let router = proglang::runtime::actor::SignalRouter::default();
+    let router = lia::runtime::actor::SignalRouter::default();
     assert!(router.register_loop("Inbox", Vec::new()));
     assert!(!router.register_loop("Inbox", Vec::new()));
     assert!(router.start_loop("Inbox"));
@@ -679,18 +679,18 @@ fn test_signal_router_allows_only_one_active_instance_per_loop_name() {
 
 #[test]
 fn test_spawn_starts_a_dormant_loop_then_becomes_a_signal() {
-    let router = proglang::runtime::actor::SignalRouter::default();
+    let router = lia::runtime::actor::SignalRouter::default();
     assert!(router.register_loop("Inbox", Vec::new()));
 
     let first = router.spawn_or_signal("Inbox", Some("first".to_string()));
-    assert!(matches!(first, proglang::runtime::actor::LoopSpawn::Started(_)));
+    assert!(matches!(first, lia::runtime::actor::LoopSpawn::Started(_)));
     let second = router.spawn_or_signal("Inbox", Some("second".to_string()));
-    assert!(matches!(second, proglang::runtime::actor::LoopSpawn::Signalled));
+    assert!(matches!(second, lia::runtime::actor::LoopSpawn::Signalled));
 
     assert_eq!(router.receive_next("Inbox").value.as_deref(), Some("first"));
     assert_eq!(router.receive_next("Inbox").value.as_deref(), Some("second"));
     router.stop_loop("Inbox");
-    assert!(matches!(router.spawn_or_signal("Inbox", None), proglang::runtime::actor::LoopSpawn::Started(_)));
+    assert!(matches!(router.spawn_or_signal("Inbox", None), lia::runtime::actor::LoopSpawn::Started(_)));
     let empty_start = router.receive_next("Inbox");
     assert_eq!(empty_start.value, None);
     assert_eq!(empty_start.pending, 0);
@@ -698,16 +698,16 @@ fn test_spawn_starts_a_dormant_loop_then_becomes_a_signal() {
 
 #[test]
 fn test_each_loop_iteration_gets_next_signal_or_none_when_queue_is_empty() {
-    let router = proglang::runtime::actor::SignalRouter::default();
+    let router = lia::runtime::actor::SignalRouter::default();
     assert!(router.register_loop("Inbox", Vec::new()));
-    assert!(matches!(router.spawn_or_signal("Inbox", None), proglang::runtime::actor::LoopSpawn::Started(_)));
+    assert!(matches!(router.spawn_or_signal("Inbox", None), lia::runtime::actor::LoopSpawn::Started(_)));
 
     // First scheduled iteration has no parameter/signal.
     assert_eq!(router.receive_next("Inbox").value, None);
 
     // Signals that arrive before the next iteration are delivered FIFO.
-    assert!(matches!(router.spawn_or_signal("Inbox", Some("one".to_string())), proglang::runtime::actor::LoopSpawn::Signalled));
-    assert!(matches!(router.spawn_or_signal("Inbox", Some("two".to_string())), proglang::runtime::actor::LoopSpawn::Signalled));
+    assert!(matches!(router.spawn_or_signal("Inbox", Some("one".to_string())), lia::runtime::actor::LoopSpawn::Signalled));
+    assert!(matches!(router.spawn_or_signal("Inbox", Some("two".to_string())), lia::runtime::actor::LoopSpawn::Signalled));
     assert_eq!(router.receive_next("Inbox").value.as_deref(), Some("one"));
     assert_eq!(router.receive_next("Inbox").value.as_deref(), Some("two"));
 

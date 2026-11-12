@@ -1,6 +1,6 @@
 // ============================================================
 import std
-// 04_actors_concurrency_spawn.proglang
+// 04_actors_concurrency_spawn.lia
 // Feature Coverage:
 // - Concurrent actor model with pure value semantics
 // - Isolated routine declarations ('routine')

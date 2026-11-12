@@ -1,6 +1,6 @@
-# ProgLang - Finite Tasks, Persistent Loops, and Isolated Actors
+# Lia - Finite Tasks, Persistent Loops, and Isolated Actors
 
-This is the reference implementation in **Rust** of the compiler and runtime for **ProgLang**. Functions and routines terminate, every isolated loop iteration terminates, and actors communicate through explicit asynchronous messages.
+This is the reference implementation in **Rust** of the compiler and runtime for **Lia**. Functions and routines terminate, every isolated loop iteration terminates, and actors communicate through explicit asynchronous messages.
 
 ---
 
@@ -9,28 +9,28 @@ This is the reference implementation in **Rust** of the compiler and runtime for
 The project is structured into modular layers:
 
 ```text
-proglang/
+lia/
 ├── grammars/
-│   └── ProgLang.g4         # ANTLR4 Grammar Specification (100% English)
+│   └── Lia.g4         # ANTLR4 Grammar Specification (100% English)
 ├── programs/               # Test Suite Programs Covering Language Features
-│   ├── 00_hello_world.proglang
-│   ├── 01_structs_and_functions.proglang
-│   ├── 02_bounded_loops.proglang
-│   ├── 03_structural_recursion.proglang
-│   ├── 04_actors_concurrency_spawn.proglang
-│   ├── 05_arenas_and_local_refs.proglang
-│   ├── 06_full_pipeline.proglang
-│   ├── 08_persistent_loop.proglang
-│   ├── 09_loop_signals.proglang
-│   ├── 10_exceptions.proglang
-│   ├── 11_search_and_sort.proglang
-│   ├── 12_main_entry.proglang
-│   ├── 13_library_consumer.proglang
-│   ├── std.proglang               # Explicit runtime-backed standard library
-│   ├── invalid_01_dag_cycle.proglang
-│   ├── invalid_02_infinite_recursion.proglang
-│   ├── invalid_03_spawn_with_ref.proglang
-│   ├── invalid_04_while_loop_prohibited.proglang
+│   ├── 00_hello_world.lia
+│   ├── 01_structs_and_functions.lia
+│   ├── 02_bounded_loops.lia
+│   ├── 03_structural_recursion.lia
+│   ├── 04_actors_concurrency_spawn.lia
+│   ├── 05_arenas_and_local_refs.lia
+│   ├── 06_full_pipeline.lia
+│   ├── 08_persistent_loop.lia
+│   ├── 09_loop_signals.lia
+│   ├── 10_exceptions.lia
+│   ├── 11_search_and_sort.lia
+│   ├── 12_main_entry.lia
+│   ├── 13_library_consumer.lia
+│   ├── std.lia               # Explicit runtime-backed standard library
+│   ├── invalid_01_dag_cycle.lia
+│   ├── invalid_02_infinite_recursion.lia
+│   ├── invalid_03_spawn_with_ref.lia
+│   ├── invalid_04_while_loop_prohibited.lia
 │   └── README.md
 ├── src/
 │   ├── ast.rs              # Abstract Syntax Tree (AST) Node Definitions
@@ -66,7 +66,7 @@ proglang/
 
 ## ✍️ Syntax Overview
 
-ProgLang does **not** use semicolons. Statements are newline-separated:
+Lia does **not** use semicolons. Statements are newline-separated:
 
 ### Program entry point
 
@@ -75,7 +75,7 @@ when `main` (or work it starts) uses `spawn`. A source file without this entry
 routine is a library: it can be imported but does not execute on its own. The
 process exits after `main`, all spawned routines, and all active loops finish.
 
-```proglang
+```lia
 routine main() {
     spawn Worker()
 }
@@ -84,7 +84,7 @@ routine main() {
 Pressing `Ctrl+C` explicitly stops all active routines and loops, discarding
 queued work and preventing persistent loops from being scheduled again.
 
-```proglang
+```lia
 // Package import
 import math
 import math.{Vector2D, multiply}
@@ -120,7 +120,7 @@ routines and, when its body ends, is queued again. A running loop never
 reserves a CPU core. The reserved `terminate` statement ends the current loop
 instance:
 
-```proglang
+```lia
 loop Poller() {
     terminate
 }
@@ -130,7 +130,7 @@ loop Poller() {
 
 Any function, routine, or loop can send a non-blocking message to a named loop:
 
-```proglang
+```lia
 signal Poller("new work")
 ```
 
@@ -151,7 +151,7 @@ Functions can emit exceptions with `throw` and all declarations can handle
 them with `try/catch`. Routines and loops may catch exceptions but cannot
 throw them directly:
 
-```proglang
+```lia
 import std
 
 func parse(value: String) {
@@ -169,12 +169,12 @@ routine Worker(value: String) {
 
 ### Search and sorting examples
 
-[11_search_and_sort.proglang](programs/11_search_and_sort.proglang) is a
+[11_search_and_sort.lia](programs/11_search_and_sort.lia) is a
 runnable fixture over literal integer lists. It demonstrates linear search and
 maximum (`O(N)` worst case), `insert_sorted` (`O(N)`), and insertion sort
 (`O(N²)` worst case). Its `import std` is explicit: `std.equals`, `std.max`,
 `std.empty`, and `std.prepend` are package declarations backed by the runtime,
-while the algorithms themselves are ordinary ProgLang functions. The integration
+while the algorithms themselves are ordinary Lia functions. The integration
 test executes their results; the static-analysis test checks those bounds against
 the usual literature classes.
 The `std` package is closed: it exposes only certified terminating primitives
@@ -193,7 +193,7 @@ exemplos com `main`.
 
 Uma biblioteca cujo arquivo começa com número pode ser importada pelo nome
 entre aspas, por exemplo `import "03_structural_recursion"`. O programa
-[`13_library_consumer.proglang`](programs/13_library_consumer.proglang) executa
+[`13_library_consumer.lia`](programs/13_library_consumer.lia) executa
 funções dessa biblioteca importada.
 Functions are the only declarations that return values; routines and loops do
 not have return values.
@@ -206,7 +206,7 @@ of its next iteration. `receive.value` is the one message delivered to that
 iteration and `receive.pending` is the number still queued; the next iteration
 receives the next value. Sending does not wait for the receiving loop.
 
-See [`programs/09_loop_signals.proglang`](programs/09_loop_signals.proglang)
+See [`programs/09_loop_signals.lia`](programs/09_loop_signals.lia)
 for a routine that emits a signal and a persistent loop that consumes it.
 
 ### Copy / Reference Assignment Rules
@@ -237,13 +237,13 @@ cargo build --release
 ### Run Programs Directly
 ```bash
 # Run a program with an entry routine
-cargo run -- programs/12_main_entry.proglang
+cargo run -- programs/12_main_entry.lia
 
 # Run with scheduler telemetry
-cargo run -- --verbose programs/12_main_entry.proglang
+cargo run -- --verbose programs/12_main_entry.lia
 
 # Compile an artifact
-cargo run -- compile programs/12_main_entry.proglang -o main.progc
+cargo run -- compile programs/12_main_entry.lia -o main.liac
 ```
 
 Files without `routine main()` are libraries: they validate and compile, but
@@ -258,20 +258,20 @@ cargo test
 
 ```bash
 # Explicit kind: func, routine, or loop
-cargo run -- complexity programs/03_structural_recursion.proglang func sum_list
+cargo run -- complexity programs/03_structural_recursion.lia func sum_list
 # func sum_list: O(N)
 
-cargo run -- complexity programs/04_actors_concurrency_spawn.proglang routine QueueManager
+cargo run -- complexity programs/04_actors_concurrency_spawn.lia routine QueueManager
 # routine QueueManager: O(N)
 
-cargo run -- complexity programs/09_loop_signals.proglang loop Inbox
+cargo run -- complexity programs/09_loop_signals.lia loop Inbox
 # loop Inbox: O(1)
 ```
 
 When a declaration name is unique, the kind can be omitted:
 
 ```bash
-cargo run -- complexity programs/09_loop_signals.proglang Inbox
+cargo run -- complexity programs/09_loop_signals.lia Inbox
 ```
 
 ---

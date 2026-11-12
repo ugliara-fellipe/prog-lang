@@ -1,4 +1,4 @@
-grammar ProgLang;
+grammar Lia;
 
 // ==========================================
 // PARSER RULES

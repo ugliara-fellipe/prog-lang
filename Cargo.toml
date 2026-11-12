@@ -1,8 +1,8 @@
 [package]
-name = "proglang"
+name = "lia"
 version = "0.1.0"
 edition = "2021"
-authors = ["ProgLang Team"]
+authors = ["Lia Team"]
 description = "Compiler and runtime for a language with finite routines and isolated actors"
 
 [dependencies]

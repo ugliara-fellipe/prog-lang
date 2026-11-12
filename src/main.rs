@@ -2,15 +2,15 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use tokio::sync::mpsc;
-use proglang::ast::*;
-use proglang::parser::Parser;
-use proglang::semantic::dag::CallGraphValidator;
-use proglang::semantic::type_checker::TypeChecker;
-use proglang::semantic::termination::TerminationChecker;
-use proglang::semantic::complexity::ComplexityAnalyzer;
-use proglang::semantic::packages::PackageManager;
-use proglang::runtime::actor::{ActorHandle, Message};
-use proglang::runtime::event_loop::RuntimeEventLoop;
+use lia::ast::*;
+use lia::parser::Parser;
+use lia::semantic::dag::CallGraphValidator;
+use lia::semantic::type_checker::TypeChecker;
+use lia::semantic::termination::TerminationChecker;
+use lia::semantic::complexity::ComplexityAnalyzer;
+use lia::semantic::packages::PackageManager;
+use lia::runtime::actor::{ActorHandle, Message};
+use lia::runtime::event_loop::RuntimeEventLoop;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if verbose {
         println!("============================================================");
-        println!(" ProgLang - Compiler and Runtime for Finite Routines ");
+        println!(" Lia - Compiler and Runtime for Finite Routines ");
         println!("============================================================\n");
     }
 
@@ -36,27 +36,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
 
-        // 2. Command: compile <file.prolang> [-o <file.progc>]
+        // 2. Command: compile <file.lia> [-o <file.liac>]
         if cmd == "compile" || cmd == "build" {
             if args.len() < 3 {
-                eprintln!("Usage: proglang compile <file.prolang> [-o <file.progc>]");
+                eprintln!("Usage: lia compile <file.lia> [-o <file.liac>]");
                 std::process::exit(1);
             }
             let input_path = &args[2];
             let output_path = if args.len() >= 5 && args[3] == "-o" {
                 args[4].clone()
             } else {
-                format!("{}.progc", input_path.trim_end_matches(".prolang").trim_end_matches(".proglang"))
+                format!("{}.liac", input_path.trim_end_matches(".lia"))
             };
             compile_to_artifact(input_path, &output_path)?;
             return Ok(());
         }
 
-        // 3. Command: complexity <file.proglang> <name>
-        //    Or: complexity <file.proglang> <func|routine|loop> <name>
+        // 3. Command: complexity <file.lia> <name>
+        //    Or: complexity <file.lia> <func|routine|loop> <name>
         if cmd == "complexity" {
             if args.len() < 4 || args.len() > 5 {
-                eprintln!("Usage: proglang complexity <file.proglang> [func|routine|loop] <name>");
+                eprintln!("Usage: lia complexity <file.lia> [func|routine|loop] <name>");
                 std::process::exit(1);
             }
             let input_path = &args[2];
@@ -69,11 +69,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
 
-        // 4. Command: annotate <file.proglang> [-o <output>]
+        // 4. Command: annotate <file.lia> [-o <output>]
         //    Parses, validates and injects worst-case complexity comments.
         if cmd == "annotate" {
             if args.len() < 3 {
-                eprintln!("Usage: proglang annotate <file.proglang> [-o <output.proglang>]");
+                eprintln!("Usage: lia annotate <file.lia> [-o <output.lia>]");
                 std::process::exit(1);
             }
             let input_path = &args[2];
@@ -86,14 +86,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
 
-        // 5. Command: run <file.progc | file.prolang>
+        // 5. Command: run <file.liac | file.lia>
         if cmd == "run" {
             if args.len() < 3 {
-                eprintln!("Usage: proglang run <file.progc | file.prolang>");
+                eprintln!("Usage: lia run <file.liac | file.lia>");
                 std::process::exit(1);
             }
             let target_path = &args[2];
-            if target_path.ends_with(".progc") {
+            if target_path.ends_with(".liac") {
                 run_compiled_artifact(target_path, verbose).await?;
             } else {
                 compile_and_run_file(target_path, verbose).await?;
@@ -102,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // 4. Direct file execution
-        if cmd.ends_with(".progc") {
+        if cmd.ends_with(".liac") {
             run_compiled_artifact(cmd, verbose).await?;
         } else {
             compile_and_run_file(cmd, verbose).await?;
@@ -111,10 +111,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Default fallback if no file argument is given
-    let default_file = if Path::new("hello_world.prolang").exists() {
-        "hello_world.prolang"
+    let default_file = if Path::new("hello_world.lia").exists() {
+        "hello_world.lia"
     } else {
-        "programs/06_pipeline_completo.proglang"
+        "programs/06_pipeline_completo.lia"
     };
 
     compile_and_run_file(default_file, verbose).await?;
@@ -162,7 +162,7 @@ fn normalize_complexity_kind(kind: &str) -> Result<&'static str, Box<dyn std::er
     }
 }
 
-/// Compiles ProgLang source code, runs formal verifications, and writes .progc artifact
+/// Compiles Lia source code, runs formal verifications, and writes .liac artifact
 fn compile_to_artifact(input_path: &str, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("🔨 Compiling '{}' -> '{}'...", input_path, output_path);
     let source = fs::read_to_string(input_path)?;
@@ -197,11 +197,11 @@ fn compile_to_artifact(input_path: &str, output_path: &str) -> Result<(), Box<dy
 
     println!("\n✅ Compilation successful! Artifact saved to '{}'", output_path);
     println!("To execute the compiled artifact instantly:");
-    println!("  ./proglang run {}", output_path);
+    println!("  ./lia run {}", output_path);
     Ok(())
 }
 
-/// Loads and executes a pre-compiled artifact (.progc)
+/// Loads and executes a pre-compiled artifact (.liac)
 async fn run_compiled_artifact(artifact_path: &str, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     if verbose {
         println!("⚡ Loading pre-compiled artifact: {}", artifact_path);
@@ -322,7 +322,7 @@ async fn execute_runtime(program: &Program, verbose: bool) -> Result<(), Box<dyn
     if let Some(main_routine) = main_routine {
         if verbose {
             println!("\n------------------------------------------------------------");
-            println!(" Starting ProgLang Runtime (Tokio EventLoop & Arenas)");
+            println!(" Starting Lia Runtime (Tokio EventLoop & Arenas)");
             println!("------------------------------------------------------------");
         }
 
@@ -390,25 +390,31 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
     println!("Running test suite validation...\n");
 
     let valid_files = [
-        "programs/00_hello_world.proglang",
-        "programs/01_structs_and_functions.proglang",
-        "programs/02_bounded_loops.proglang",
-        "programs/03_structural_recursion.proglang",
-        "programs/04_actors_concurrency_spawn.proglang",
-        "programs/05_arenas_and_local_refs.proglang",
-        "programs/06_full_pipeline.proglang",
-        "programs/08_persistent_loop.proglang",
-        "programs/09_loop_signals.proglang",
-        "programs/10_exceptions.proglang",
-        "programs/11_search_and_sort.proglang",
-        "programs/12_main_entry.proglang",
+        "programs/00_hello_world.lia",
+        "programs/01_structs_and_functions.lia",
+        "programs/02_bounded_loops.lia",
+        "programs/03_structural_recursion.lia",
+        "programs/04_actors_concurrency_spawn.lia",
+        "programs/05_arenas_and_local_refs.lia",
+        "programs/06_full_pipeline.lia",
+        "programs/07_packages_and_imports.lia",
+        "programs/08_persistent_loop.lia",
+        "programs/09_loop_signals.lia",
+        "programs/10_exceptions.lia",
+        "programs/11_search_and_sort.lia",
+        "programs/12_main_entry.lia",
+        "programs/13_library_consumer.lia",
+        "programs/math.lia",
+        "programs/std.lia",
     ];
 
     println!("--- Verifying Valid Programs (Language Features) ---");
     for file in &valid_files {
         let source = fs::read_to_string(file)?;
         let mut parser = Parser::new(&source)?;
-        let prog = parser.parse_program()?;
+        let raw_program = parser.parse_program()?;
+        let mut packages = PackageManager::new("programs");
+        let prog = packages.resolve_program(raw_program)?;
 
         let mut dag = CallGraphValidator::new();
         dag.build_and_validate(&prog)?;
@@ -424,7 +430,7 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- Verifying Invalid Programs (Safety Guarantees) ---");
     // invalid_01
     {
-        let src = fs::read_to_string("programs/invalid_01_dag_cycle.proglang")?;
+        let src = fs::read_to_string("programs/invalid_01_dag_cycle.lia")?;
         let mut p = Parser::new(&src)?;
         let prog = p.parse_program()?;
         let mut dag = CallGraphValidator::new();
@@ -433,7 +439,7 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
     }
     // invalid_02
     {
-        let src = fs::read_to_string("programs/invalid_02_infinite_recursion.proglang")?;
+        let src = fs::read_to_string("programs/invalid_02_infinite_recursion.lia")?;
         let mut p = Parser::new(&src)?;
         let prog = p.parse_program()?;
         assert!(TerminationChecker::verify_program(&prog).is_err());
@@ -441,14 +447,14 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
     }
     // invalid_03 – rejected at parse level (Ref in routine param)
     {
-        let src = fs::read_to_string("programs/invalid_03_spawn_with_ref.proglang")?;
+        let src = fs::read_to_string("programs/invalid_03_spawn_with_ref.lia")?;
         let res = Parser::new(&src).and_then(|mut p| p.parse_program());
         assert!(res.is_err());
         println!("  [OK] invalid_03_spawn_with_ref successfully rejected (SyntaxError).");
     }
     // invalid_04
     {
-        let src = fs::read_to_string("programs/invalid_04_while_loop_prohibited.proglang")?;
+        let src = fs::read_to_string("programs/invalid_04_while_loop_prohibited.lia")?;
         let res = Parser::new(&src).and_then(|mut p| p.parse_program());
         assert!(res.is_err());
         println!("  [OK] invalid_04_while_loop_prohibited successfully rejected (SyntaxError).");
@@ -458,7 +464,7 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Reads a `.proglang` file, runs all validations, computes worst-case
+/// Reads a `.lia` file, runs all validations, computes worst-case
 /// complexity for every `func` and `routine`, and writes the annotated
 /// source back to `output_path`.
 ///
@@ -500,7 +506,7 @@ fn annotate_complexity(input_path: &str, output_path: &str) -> Result<(), Box<dy
 
 /// Injects `// complexity: O(…)` comments just before each `func`/`routine`
 /// declaration line in the source text.
-fn inject_complexity_comments(source: &str, entries: &[proglang::semantic::complexity::ComplexityEntry]) -> String {
+fn inject_complexity_comments(source: &str, entries: &[lia::semantic::complexity::ComplexityEntry]) -> String {
     // Build a lookup: (kind, name) -> big-o string.
     let mut lookup: std::collections::HashMap<(&str, &str), String> = std::collections::HashMap::new();
     for e in entries {

@@ -1,5 +1,5 @@
 // ============================================================
-// invalid_01_dag_cycle.proglang
+// invalid_01_dag_cycle.lia
 // Negative Test: Call Graph (DAG) Verification
 //
 // Expected: The compiler MUST reject this program with error

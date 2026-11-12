@@ -1,6 +1,6 @@
 // ============================================================
 import std
-// 02_bounded_loops.proglang
+// 02_bounded_loops.lia
 // Feature Coverage:
 // - Strictly bounded repetition loops ('for ... in')
 // - Finite termination guarantee: absence of unbounded loops (no 'while')

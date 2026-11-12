@@ -1,4 +1,4 @@
-/// Complexity Analyzer for ProgLang.
+/// Complexity Analyzer for Lia.
 ///
 /// Functions and routines are guaranteed finite, and each isolated loop
 /// iteration is guaranteed finite. We can therefore compute a **static

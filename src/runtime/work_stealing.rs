@@ -64,7 +64,7 @@ impl WorkStealingPool {
             let pending_clone = Arc::clone(&pending_tasks);
 
             let handle = thread::Builder::new()
-                .name(format!("proglang-core-worker-{}", worker_id))
+                .name(format!("lia-core-worker-{}", worker_id))
                 .spawn(move || {
                     // Pin worker thread to the physical/logical core if supported
                     if let Some(core_id) = core_id_opt {

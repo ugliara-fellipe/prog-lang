@@ -91,7 +91,7 @@ impl SignalRouter {
             .insert(function.name.clone(), function);
     }
 
-    /// Evaluates a ProgLang function call. Standard-library operations are
+    /// Evaluates a Lia function call. Standard-library operations are
     /// available only with the qualified `std.` name, so source files must
     /// import `std` before using them.
     pub fn evaluate_function(&self, name: &str, args: Vec<RuntimeValue>) -> Option<RuntimeValue> {
