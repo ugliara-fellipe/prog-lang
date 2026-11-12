@@ -7,6 +7,7 @@ use crate::ast::Statement;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
+    /// Name used for diagnostics and loop-mailbox lookup.
     pub routine_name: String,
     pub payload: String,
     #[serde(default)]
@@ -24,7 +25,10 @@ pub struct ActorHandle {
 /// caller.
 #[derive(Default)]
 pub struct SignalRouter {
+    /// One FIFO mailbox plus lifecycle state for each declared loop.
     mailboxes: Mutex<HashMap<String, LoopMailbox>>,
+    /// Routine bodies are registered once at startup so `spawn Worker()` can
+    /// materialize an independent task without sharing local arena state.
     routines: Mutex<HashMap<String, Vec<Statement>>>,
 }
 
@@ -50,6 +54,7 @@ pub struct ReceivedSignal {
 }
 
 impl SignalRouter {
+    /// Registers a routine body for later asynchronous spawning.
     pub fn register_routine(&self, name: &str, statements: Vec<Statement>) -> bool {
         let mut routines = self.routines.lock().expect("routine registry lock poisoned");
         if routines.contains_key(name) { return false; }
@@ -57,6 +62,8 @@ impl SignalRouter {
         true
     }
 
+    /// Creates a fresh routine task. The cloned AST is intentional: each task
+    /// receives its own arena when a worker begins execution.
     pub fn spawn_routine(&self, name: &str, payload: String) -> Option<Message> {
         self.routines.lock().expect("routine registry lock poisoned").get(name).map(|statements| Message {
             routine_name: name.to_string(),
@@ -89,6 +96,8 @@ impl SignalRouter {
         }
     }
 
+    /// Marks the named loop dormant after `terminate`, allowing a later spawn
+    /// to start a new instance using the same mailbox.
     pub fn stop_loop(&self, name: &str) {
         if let Some(mailbox) = self.mailboxes.lock().expect("signal mailbox lock poisoned").get_mut(name) {
             mailbox.active = false;

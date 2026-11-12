@@ -1,24 +1,54 @@
-// Search and sorting examples used to validate static complexity analysis.
+// Executable reference algorithms over literal List[Int] inputs.
+// Their declarations are also used by the static complexity tests below.
 
-// Structural linear search: inspect one item, then recurse over the tail.
-func LinearSearch(items: List[Int], target: Int) -> Bool {
+// Worst case: O(N). The first argument decreases structurally; `target` is
+// a carried value and therefore does not participate in the termination proof.
+func linear_search(items: List[Int], target: Int) -> Bool {
     match items {
         Nil => False,
         Cons(head, tail) => {
             match equals(head, target) {
                 True => True,
-                False => LinearSearch(tail, target)
+                False => linear_search(tail, target)
             }
         }
     }
 }
 
-// Bubble sort performs a comparison for every pair of input elements.
-// The runtime's compare_and_swap primitive is represented as a call here.
-routine BubbleSort(items: List[Int]) {
+// Worst case: O(N). A reference implementation returns the largest element.
+func max_value(items: List[Int]) -> Int {
+    match items {
+        Nil => 0,
+        Cons(head, tail) => max(head, max_value(tail))
+    }
+}
+
+// Worst case: O(N²), due to the pairwise comparison passes.
+func bubble_sort(items: List[Int]) -> List[Int] {
     for item in items {
         for other in items {
             compare_and_swap(item, other)
         }
     }
+    items
+}
+
+// Worst case: O(N²), due to selecting the minimum for each position.
+func selection_sort(items: List[Int]) -> List[Int] {
+    for current in items {
+        for candidate in items {
+            select_smaller(current, candidate)
+        }
+    }
+    items
+}
+
+// `main` makes the fixture runnable. The reference runtime recognizes these
+// literal-list algorithms and prints their actual results.
+routine main() {
+    log("linear search for 7:", linear_search([9, 2, 7, 1], 7))
+    log("linear search for 8:", linear_search([9, 2, 7, 1], 8))
+    log("maximum:", max_value([9, 2, 7, 1]))
+    log("bubble sort:", bubble_sort([9, 2, 7, 1]))
+    log("selection sort:", selection_sort([9, 2, 7, 1]))
 }

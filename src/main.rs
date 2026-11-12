@@ -312,6 +312,8 @@ async fn compile_and_run_file(file_path: &str, verbose: bool) -> Result<(), Box<
 }
 
 async fn execute_runtime(program: &Program, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+    // Declarations are library members by default. Only a routine literally
+    // named `main` creates a runnable program entry point.
     let main_routine = program.declarations.iter().find_map(|decl| match decl {
         TopLevelDecl::Routine(routine) if routine.name == "main" => Some(routine),
         _ => None,

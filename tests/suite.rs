@@ -3,6 +3,7 @@ use proglang::semantic::dag::CallGraphValidator;
 use proglang::semantic::type_checker::TypeChecker;
 use proglang::semantic::termination::TerminationChecker;
 use proglang::semantic::SemanticError;
+use std::process::Command;
 
 fn compile_and_validate(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut parser = Parser::new(source)?;
@@ -98,7 +99,7 @@ fn test_program_10_exceptions() {
 }
 
 #[test]
-fn test_program_11_search_and_sort_complexities() {
+fn test_program_11_search_and_sort_match_literature_worst_case_complexities() {
     let code = include_str!("../programs/11_search_and_sort.proglang");
     assert!(compile_and_validate(code).is_ok());
 
@@ -110,14 +111,70 @@ fn test_program_11_search_and_sort_complexities() {
         .map(|entry| (entry.name, entry.complexity.to_big_o()))
         .collect();
 
-    assert_eq!(complexities.get("LinearSearch"), Some(&"O(N)".to_string()));
-    assert_eq!(complexities.get("BubbleSort"), Some(&"O(N²)".to_string()));
+    // Linear search and maximum scan each element once; bubble and selection
+    // sort compare element pairs. These are their standard worst-case bounds.
+    assert_eq!(complexities.get("linear_search"), Some(&"O(N)".to_string()));
+    assert_eq!(complexities.get("max_value"), Some(&"O(N)".to_string()));
+    assert_eq!(complexities.get("bubble_sort"), Some(&"O(N²)".to_string()));
+    assert_eq!(complexities.get("selection_sort"), Some(&"O(N²)".to_string()));
+}
+
+#[test]
+fn test_program_11_executes_search_and_sort_algorithms() {
+    let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
+        .arg("programs/11_search_and_sort.proglang")
+        .output()
+        .expect("run algorithm fixture");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("valid UTF-8 output");
+    assert!(stdout.contains("linear search for 7: true"));
+    assert!(stdout.contains("linear search for 8: false"));
+    assert!(stdout.contains("maximum: 9"));
+    assert!(stdout.contains("bubble sort: [1, 2, 7, 9]"));
+    assert!(stdout.contains("selection sort: [1, 2, 7, 9]"));
 }
 
 #[test]
 fn test_program_12_main_entry() {
     let code = include_str!("../programs/12_main_entry.proglang");
     assert!(compile_and_validate(code).is_ok());
+}
+
+/// The real executable must dispatch only `main`, wait for its spawned work,
+/// and then exit without running unrelated routine declarations.
+#[test]
+fn test_main_is_the_only_automatic_runtime_entry_point() {
+    let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
+        .arg("programs/12_main_entry.proglang")
+        .output()
+        .expect("run main-entry fixture");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("valid UTF-8 output");
+    assert!(stdout.contains("main started"));
+    assert!(stdout.contains("worker finished"));
+    assert!(!stdout.contains("this must not run"));
+}
+
+/// A valid source without `routine main()` is a library: direct execution
+/// validates it and exits without dispatching declarations as actor tasks.
+#[test]
+fn test_library_without_main_does_not_dispatch_runtime_work() {
+    let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
+        .arg("programs/03_structural_recursion.proglang")
+        .output()
+        .expect("run library fixture");
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout).unwrap().trim().is_empty());
+}
+
+#[test]
+fn test_complexity_cli_reports_requested_declaration() {
+    let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
+        .args(["complexity", "programs/11_search_and_sort.proglang", "func", "bubble_sort"])
+        .output()
+        .expect("run complexity CLI");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "func bubble_sort: O(N²)");
 }
 
 #[test]

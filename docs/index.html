@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="ProgLang: finite functions and routines, persistent signal-driven loops, and static complexity analysis.">
+    <title>ProgLang — predictable concurrent programs</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="ProgLang home">
+        <span class="brand-mark" aria-hidden="true">λ</span>
+        <span>ProgLang</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#language">Language</a>
+        <a href="#loops">Loops</a>
+        <a href="#analysis">Analysis</a>
+        <a class="github-link" href="https://github.com/ugliara-fellipe/prog-lang" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+
+    <main id="content">
+      <section id="top" class="hero section-shell">
+        <div class="hero-copy">
+          <p class="eyebrow">A reference compiler and runtime in Rust</p>
+          <h1>Concurrent programs with <em>visible</em> lifecycles.</h1>
+          <p class="lede">ProgLang combines finite functions and routines with persistent, signal-driven loops. The compiler verifies termination boundaries and reports worst-case complexity before work reaches the runtime.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/ugliara-fellipe/prog-lang" target="_blank" rel="noreferrer">Explore the repository <span aria-hidden="true">→</span></a>
+            <a class="button button-quiet" href="#quickstart">Try the commands</a>
+          </div>
+        </div>
+        <div class="hero-panel terminal" aria-label="ProgLang program example">
+          <div class="terminal-bar"><span></span><span></span><span></span><code>main.proglang</code></div>
+          <pre><code><span class="code-keyword">routine</span> <span class="code-name">main</span>() {
+  <span class="code-keyword">spawn</span> <span class="code-name">Inbox</span>(<span class="code-string">"hello"</span>)
+}
+
+<span class="code-keyword">loop</span> <span class="code-name">Inbox</span>() {
+  log(receive.value)
+  <span class="code-keyword">terminate</span>
+}</code></pre>
+          <p class="terminal-note"><span class="status-dot"></span> One entry point. One named loop instance.</p>
+        </div>
+      </section>
+
+      <section class="principles section-shell" aria-labelledby="principles-title">
+        <div class="section-heading">
+          <p class="eyebrow">Design constraints</p>
+          <h2 id="principles-title">Make the useful boundaries explicit.</h2>
+        </div>
+        <div class="principle-grid">
+          <article><span class="number">01</span><h3>Finite work</h3><p>Functions and routines must terminate. Persistent loops are checked one finite iteration at a time.</p></article>
+          <article><span class="number">02</span><h3>Isolated tasks</h3><p>Each scheduled task receives an arena. When it completes, the arena disappears as one unit.</p></article>
+          <article><span class="number">03</span><h3>Named signals</h3><p>Loops own FIFO mailboxes. A signal never waits for the loop that will consume it.</p></article>
+        </div>
+      </section>
+
+      <section id="language" class="feature-band">
+        <div class="section-shell split-layout">
+          <div>
+            <p class="eyebrow">The language</p>
+            <h2>Start deliberately. Spawn deliberately.</h2>
+            <p>Programs begin at <code>routine main()</code>. Files without it are libraries. Routines are independent tasks; functions are the declarations that return values and may emit exceptions.</p>
+            <ul class="check-list">
+              <li><span>✓</span> Bounded <code>for</code> loops; no <code>while</code>.</li>
+              <li><span>✓</span> Structural recursion for finite functions.</li>
+              <li><span>✓</span> <code>try/catch</code> everywhere; <code>throw</code> in functions.</li>
+            </ul>
+          </div>
+          <div class="code-card">
+            <div class="code-card-label">Entry point + exception boundary</div>
+            <pre><code><span class="code-keyword">routine</span> <span class="code-name">main</span>() {
+  <span class="code-keyword">spawn</span> <span class="code-name">Worker</span>()
+}
+
+<span class="code-keyword">routine</span> <span class="code-name">Worker</span>() {
+  <span class="code-keyword">try</span> { parse(<span class="code-string">"42"</span>) }
+  <span class="code-keyword">catch</span> error { log(error) }
+}</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="loops" class="section-shell loops-section" aria-labelledby="loops-title">
+        <div class="section-heading narrow">
+          <p class="eyebrow">Persistent loops</p>
+          <h2 id="loops-title">A loop is dormant until it is spawned.</h2>
+          <p>Its first spawn starts it. Later spawns signal the already active instance instead of restarting it.</p>
+        </div>
+        <div class="lifecycle" aria-label="Loop lifecycle">
+          <div><span class="lifecycle-step">1</span><strong>Dormant</strong><small>Declaration is registered.</small></div>
+          <span class="connector" aria-hidden="true">→</span>
+          <div><span class="lifecycle-step">2</span><strong>Started</strong><small><code>spawn Inbox(value)</code></small></div>
+          <span class="connector" aria-hidden="true">→</span>
+          <div><span class="lifecycle-step">3</span><strong>Re-enqueued</strong><small>One signal per iteration.</small></div>
+          <span class="connector" aria-hidden="true">→</span>
+          <div><span class="lifecycle-step">4</span><strong>Terminated</strong><small><code>terminate</code> releases the name.</small></div>
+        </div>
+        <div class="example-tabs" data-tabs>
+          <div class="tab-list" role="tablist" aria-label="Loop examples">
+            <button type="button" role="tab" aria-selected="true" aria-controls="tab-signal" id="button-signal" data-tab="signal">Signal delivery</button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="tab-empty" id="button-empty" data-tab="empty">Empty mailbox</button>
+          </div>
+          <div id="tab-signal" role="tabpanel" aria-labelledby="button-signal" class="tab-panel is-active">
+            <pre><code><span class="code-keyword">routine</span> <span class="code-name">Producer</span>() {
+  <span class="code-keyword">spawn</span> <span class="code-name">Inbox</span>(<span class="code-string">"new work"</span>)
+}
+
+<span class="code-keyword">loop</span> <span class="code-name">Inbox</span>() {
+  log(receive.value, receive.pending)
+  <span class="code-keyword">terminate</span>
+}</code></pre>
+          </div>
+          <div id="tab-empty" role="tabpanel" aria-labelledby="button-empty" class="tab-panel" hidden>
+            <pre><code><span class="code-comment">// No argument starts the loop with no queued signal.</span>
+<span class="code-keyword">spawn</span> <span class="code-name">Inbox</span>()
+
+<span class="code-comment">// First iteration:</span>
+receive.value   <span class="code-comment">// None</span>
+receive.pending <span class="code-comment">// 0</span></code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="analysis" class="analysis-section">
+        <div class="section-shell analysis-grid">
+          <div>
+            <p class="eyebrow">Static analysis</p>
+            <h2>Ask the compiler for one declaration’s cost.</h2>
+            <p>The analyzer validates the source first, then reports the worst-case class for functions, routines, or one loop iteration.</p>
+            <div class="command-box"><code id="command-text">cargo run -- complexity programs/11_search_and_sort.proglang func bubble_sort</code><button class="copy-button" type="button" data-copy="#command-text">Copy</button></div>
+          </div>
+          <div class="complexity-table" role="table" aria-label="Algorithm complexity examples">
+            <div role="row" class="table-head"><span role="columnheader">Algorithm</span><span role="columnheader">Worst case</span></div>
+            <div role="row"><span role="cell"><code>linear_search</code></span><span role="cell">O(N)</span></div>
+            <div role="row"><span role="cell"><code>max_value</code></span><span role="cell">O(N)</span></div>
+            <div role="row"><span role="cell"><code>bubble_sort</code></span><span role="cell">O(N²)</span></div>
+            <div role="row"><span role="cell"><code>selection_sort</code></span><span role="cell">O(N²)</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="quickstart" class="quickstart section-shell">
+        <div><p class="eyebrow">Quick start</p><h2>Build, run, inspect.</h2></div>
+        <ol>
+          <li><code>cargo test</code><span>Run the language and runtime suite.</span></li>
+          <li><code>cargo run -- programs/11_search_and_sort.proglang</code><span>Execute the algorithm fixture.</span></li>
+          <li><code>cargo run -- complexity programs/11_search_and_sort.proglang bubble_sort</code><span>Inspect a declaration’s complexity.</span></li>
+        </ol>
+      </section>
+    </main>
+
+    <footer>
+      <p>ProgLang is an open-source reference implementation.</p>
+      <a href="https://github.com/ugliara-fellipe/prog-lang" target="_blank" rel="noreferrer">github.com/ugliara-fellipe/prog-lang <span aria-hidden="true">↗</span></a>
+    </footer>
+    <script src="app.js"></script>
+  </body>
+</html>

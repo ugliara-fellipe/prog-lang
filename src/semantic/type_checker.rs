@@ -45,7 +45,7 @@ impl TypeChecker {
 
     /// Check a function declaration and store its signature.
     fn check_func(&mut self, func: &FuncDecl) -> Result<(), SemanticError> {
-        Self::reject_terminate(&func.body)?;
+        Self::validate_non_loop_body(&func.body)?;
         self.functions.insert(func.name.clone(), func.clone());
         // Parameters belong to the function's own scope.
         for param in &func.params {
@@ -59,7 +59,7 @@ impl TypeChecker {
 
     /// Check a routine declaration (actors). Routine parameters cannot be `Ref` – this is enforced by the parser.
     fn check_routine(&mut self, routine: &RoutineDecl) -> Result<(), SemanticError> {
-        Self::reject_terminate(&routine.body)?;
+        Self::validate_non_loop_body(&routine.body)?;
         for param in &routine.params {
             self.symbol_table.insert(param.name.clone(), param.param_type.clone());
         }
@@ -76,7 +76,9 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn reject_terminate(statements: &[Statement]) -> Result<(), SemanticError> {
+    /// Functions and routines do not have a loop mailbox/context. This pass
+    /// rejects loop-only control constructs before normal statement checks.
+    fn validate_non_loop_body(statements: &[Statement]) -> Result<(), SemanticError> {
         for statement in statements {
             match statement {
                 Statement::Terminate => return Err(SemanticError::TerminateOutsideLoop),
@@ -86,15 +88,15 @@ impl TypeChecker {
                 | Statement::Throw(payload) => Self::reject_receive(payload)?,
                 Statement::ForLoop { collection, body, .. } => {
                     Self::reject_receive(collection)?;
-                    Self::reject_terminate(body)?;
+                    Self::validate_non_loop_body(body)?;
                 }
                 Statement::Match { target, cases } => {
                     Self::reject_receive(target)?;
-                    for case in cases { Self::reject_terminate(&case.body)?; }
+                    for case in cases { Self::validate_non_loop_body(&case.body)?; }
                 }
                 Statement::TryCatch { try_body, catch_body, .. } => {
-                    Self::reject_terminate(try_body)?;
-                    Self::reject_terminate(catch_body)?;
+                    Self::validate_non_loop_body(try_body)?;
+                    Self::validate_non_loop_body(catch_body)?;
                 }
             }
         }
@@ -117,7 +119,9 @@ impl TypeChecker {
         }
     }
 
-    /// Verify a single statement.
+    /// Validates a statement in its declaration context. `allows_throw` is
+    /// true exclusively for function bodies; `try/catch` itself is valid in
+    /// every context, but a direct `throw` is not valid in routines or loops.
     fn check_stmt(&mut self, stmt: &Statement, allows_throw: bool) -> Result<(), SemanticError> {
         match stmt {
             Statement::Spawn(expr) => {

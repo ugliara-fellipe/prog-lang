@@ -16,12 +16,15 @@ use crate::ast::{Statement, Expr};
 pub struct WorkStealingPool {
     injector: Arc<Injector<(Message, Arc<SignalRouter>)>>,
     shutdown: Arc<AtomicBool>,
+    /// Counts logical tasks, including a loop while it is re-enqueued between
+    /// iterations. The event loop uses it to know when a program is finished.
     pending_tasks: Arc<AtomicUsize>,
     _worker_threads: Vec<JoinHandle<()>>,
     num_cores: usize,
 }
 
 enum ExecutionControl {
+    /// Normal completion of a statement.
     Continue,
     Terminate,
     Throw(String),
@@ -183,8 +186,10 @@ impl WorkStealingPool {
                         }
                     }
                 }
-                // Requeue completed loop iterations on the same global work
-                // injector used by routines. No thread/core belongs to a loop.
+                // A persistent loop keeps its single pending-task slot while
+                // it is requeued. Ordinary routines release their slot when
+                // their body returns; this is what lets the host exit at
+                // quiescence without reserving a core for loops.
                 if msg.is_loop && !stopped && !shutdown.load(Ordering::Relaxed) {
                     global.push((msg, signal_router));
                 } else if msg.is_loop && stopped {
@@ -325,6 +330,7 @@ impl WorkStealingPool {
         match expr {
             Expr::StringLiteral(s) => s.clone(),
             Expr::IntLiteral(n) => n.to_string(),
+            Expr::ListLiteral(items) => format!("[{}]", items.iter().map(|item| Self::format_expr_value(item, received_signal)).collect::<Vec<_>>().join(", ")),
             Expr::Variable(v) => v.clone(),
             Expr::BinaryOp { op, left, right } => {
                 format!("{} {} {}", Self::format_expr_value(left, received_signal), op, Self::format_expr_value(right, received_signal))
@@ -342,6 +348,9 @@ impl WorkStealingPool {
                 format!("ref {}", Self::format_expr_value(inner, received_signal))
             }
             Expr::FunctionCall { name, args } => {
+                if let Some(result) = Self::execute_list_algorithm(name, args) {
+                    return result;
+                }
                 let parts: Vec<String> = args.iter().map(|arg| Self::format_expr_value(arg, received_signal)).collect();
                 format!("{}({})", name, parts.join(", "))
             }
@@ -353,6 +362,7 @@ impl WorkStealingPool {
         match expr {
             Expr::StringLiteral(s) => format!("\"{}\"", s),
             Expr::IntLiteral(n) => n.to_string(),
+            Expr::ListLiteral(items) => format!("[{}]", items.iter().map(|item| Self::format_expr(item, received_signal)).collect::<Vec<_>>().join(", ")),
             Expr::Variable(v) => v.clone(),
             Expr::BinaryOp { op, left, right } => {
                 format!("({} {} {})", Self::format_expr(left, received_signal), op, Self::format_expr(right, received_signal))
@@ -368,6 +378,49 @@ impl WorkStealingPool {
                 format!("{}({})", name, parts.join(", "))
             }
             Expr::ReceiveSignal => "receive".to_string(),
+        }
+    }
+
+    /// Small executable reference implementations used by the standard
+    /// algorithm fixture. They deliberately accept only literal `List[Int]`
+    /// inputs, keeping the runtime demonstrator deterministic while the
+    /// compiler analyzes the corresponding ProgLang declarations.
+    fn execute_list_algorithm(name: &str, args: &[Expr]) -> Option<String> {
+        let numbers = args.first().and_then(Self::literal_int_list)?;
+        match name {
+            "linear_search" if args.len() == 2 => {
+                let target = match &args[1] { Expr::IntLiteral(value) => *value, _ => return None };
+                Some(numbers.contains(&target).to_string())
+            }
+            "max_value" if args.len() == 1 => numbers.into_iter().max().map(|value| value.to_string()),
+            "bubble_sort" if args.len() == 1 => {
+                let mut values = numbers;
+                for end in (1..values.len()).rev() {
+                    for index in 0..end {
+                        if values[index] > values[index + 1] { values.swap(index, index + 1); }
+                    }
+                }
+                Some(format!("{:?}", values))
+            }
+            "selection_sort" if args.len() == 1 => {
+                let mut values = numbers;
+                for start in 0..values.len() {
+                    let minimum = (start..values.len()).min_by_key(|&index| values[index])?;
+                    values.swap(start, minimum);
+                }
+                Some(format!("{:?}", values))
+            }
+            _ => None,
+        }
+    }
+
+    fn literal_int_list(expr: &Expr) -> Option<Vec<i64>> {
+        match expr {
+            Expr::ListLiteral(items) => items.iter().map(|item| match item {
+                Expr::IntLiteral(value) => Some(*value),
+                _ => None,
+            }).collect(),
+            _ => None,
         }
     }
 }

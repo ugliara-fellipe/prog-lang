@@ -42,6 +42,9 @@ impl RuntimeEventLoop {
             );
         }
 
+        // External submissions arrive through Tokio. Work spawned by a worker
+        // is placed directly in the shared injector to avoid blocking it on
+        // this receiver.
         while let Some(msg) = self.receiver.recv().await {
             if msg.is_loop && !self.signal_router.start_loop(&msg.routine_name) {
                 if self.verbose {

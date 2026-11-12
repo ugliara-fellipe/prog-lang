@@ -42,6 +42,7 @@ pub enum Pattern {
 pub enum Expr {
     IntLiteral(i64),
     StringLiteral(String),
+    ListLiteral(Vec<Expr>),
     Variable(String),
     /// The signal delivered to the current loop iteration. Access its fields
     /// as `receive.value` and `receive.pending`.

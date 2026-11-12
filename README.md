@@ -1,6 +1,6 @@
-# ProgLang - Language with Finite Routines and Isolated Actors
+# ProgLang - Finite Tasks, Persistent Loops, and Isolated Actors
 
-This is the reference implementation in **Rust** of the compiler and runtime for **ProgLang**, a language designed to guarantee **deterministic finite termination per routine** and **complete state isolation between actors**.
+This is the reference implementation in **Rust** of the compiler and runtime for **ProgLang**. Functions and routines terminate, every isolated loop iteration terminates, and actors communicate through explicit asynchronous messages.
 
 ---
 
@@ -20,6 +20,11 @@ proglang/
 │   ├── 04_actors_concurrency_spawn.proglang
 │   ├── 05_arenas_and_local_refs.proglang
 │   ├── 06_full_pipeline.proglang
+│   ├── 08_persistent_loop.proglang
+│   ├── 09_loop_signals.proglang
+│   ├── 10_exceptions.proglang
+│   ├── 11_search_and_sort.proglang
+│   ├── 12_main_entry.proglang
 │   ├── invalid_01_dag_cycle.proglang
 │   ├── invalid_02_infinite_recursion.proglang
 │   ├── invalid_03_spawn_with_ref.proglang
@@ -50,9 +55,9 @@ proglang/
 
 1. **Absence of Unbounded Loops (`while`):** Prohibited at the parser/syntax level. Only strictly bounded loops `for x in collection` are accepted.
 2. **Indefinite Recursion Prevention via DAG:** Pure functions cannot form cyclic cross-calling graphs ($A \to B \to A$).
-3. **Structural Decrement Proof:** Direct recursion in pure functions or routines (`spawn`) is allowed only if the compiler proves the argument passed is a strictly smaller subcomponent (e.g. `tail` of a `List[T]`).
+3. **Structural Decrement Proof:** Direct recursive functions must receive a structurally smaller first argument (for example, `tail` of a `List[T]`). Additional arguments, such as a search target, are immutable carried values.
 4. **Absolute Memory Isolation (Confined `Ref[T]`):** Mutable references are not copyable. The `spawn` statement accepts only value-copyable data. `Ref[T]` is forbidden in routine parameters (enforced at parse time).
-5. **Instant $O(1)$ Deallocation:** Every routine executes in an isolated `Arena` (`bumpalo`). Upon routine completion, the entire arena is destroyed with Zero Garbage Collector pauses.
+5. **Instant $O(1)$ Deallocation:** Every scheduled routine or loop iteration executes in an isolated `Arena` (`bumpalo`). Its arena is discarded as a unit on completion.
 6. **Finite Loop Iterations:** A persistent `loop` may be re-enqueued indefinitely, but the compiler proves every isolated iteration terminates under the same bounded-loop and recursion rules used for routines. Complexity is reported per iteration.
 
 ---
@@ -159,9 +164,12 @@ routine Worker(value: String) {
 
 ### Search and sorting examples
 
-[11_search_and_sort.proglang](programs/11_search_and_sort.proglang) contains
-a structural linear search (`O(N)`) and bubble sort (`O(N²)`). These examples
-are part of the test suite for the static complexity analyzer.
+[11_search_and_sort.proglang](programs/11_search_and_sort.proglang) is a
+runnable fixture over literal integer lists. It demonstrates linear search and
+maximum (`O(N)` worst case), plus bubble sort and selection sort (`O(N²)` worst
+case). The integration test executes the fixture and checks its output; the
+static-analysis test checks those same bounds against the usual literature
+classes.
 Functions are the only declarations that return values; routines and loops do
 not have return values.
 
@@ -203,15 +211,18 @@ cargo build --release
 
 ### Run Programs Directly
 ```bash
-# Run Hello World
-./proglang programs/00_hello_world.proglang
+# Run a program with an entry routine
+cargo run -- programs/12_main_entry.proglang
 
-# Run any test suite program
-./proglang programs/06_full_pipeline.proglang
+# Run with scheduler telemetry
+cargo run -- --verbose programs/12_main_entry.proglang
 
-# Run with full compiler & runtime telemetry
-./proglang --verbose programs/06_full_pipeline.proglang
+# Compile an artifact
+cargo run -- compile programs/12_main_entry.proglang -o main.progc
 ```
+
+Files without `routine main()` are libraries: they validate and compile, but
+do not dispatch runtime work. Press `Ctrl+C` to force-cancel active work.
 
 ### Run Test Suite
 ```bash

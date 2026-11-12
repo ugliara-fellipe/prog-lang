@@ -969,6 +969,20 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 Ok(Expr::ReceiveSignal)
             }
+            TokenKind::LBracket => {
+                self.advance()?;
+                let mut items = Vec::new();
+                while !self.check(&TokenKind::RBracket) && !self.check(&TokenKind::Eof) {
+                    items.push(self.parse_expr()?);
+                    if self.check(&TokenKind::Comma) {
+                        self.advance()?;
+                    } else {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RBracket)?;
+                Ok(Expr::ListLiteral(items))
+            }
             TokenKind::LParen => {
                 self.advance()?;
                 let expr = self.parse_expr()?;
