@@ -35,12 +35,14 @@
         </div>
         <div class="hero-panel terminal" aria-label="ProgLang program example">
           <div class="terminal-bar"><span></span><span></span><span></span><code>main.proglang</code></div>
-          <pre><code><span class="code-keyword">routine</span> <span class="code-name">main</span>() {
+          <pre><code><span class="code-keyword">import</span> std
+
+<span class="code-keyword">routine</span> <span class="code-name">main</span>() {
   <span class="code-keyword">spawn</span> <span class="code-name">Inbox</span>(<span class="code-string">"hello"</span>)
 }
 
 <span class="code-keyword">loop</span> <span class="code-name">Inbox</span>() {
-  log(receive.value)
+  std.log(receive.value)
   <span class="code-keyword">terminate</span>
 }</code></pre>
           <p class="terminal-note"><span class="status-dot"></span> One entry point. One named loop instance.</p>
@@ -73,13 +75,15 @@
           </div>
           <div class="code-card">
             <div class="code-card-label">Entry point + exception boundary</div>
-            <pre><code><span class="code-keyword">routine</span> <span class="code-name">main</span>() {
+            <pre><code><span class="code-keyword">import</span> std
+
+<span class="code-keyword">routine</span> <span class="code-name">main</span>() {
   <span class="code-keyword">spawn</span> <span class="code-name">Worker</span>()
 }
 
 <span class="code-keyword">routine</span> <span class="code-name">Worker</span>() {
   <span class="code-keyword">try</span> { parse(<span class="code-string">"42"</span>) }
-  <span class="code-keyword">catch</span> error { log(error) }
+  <span class="code-keyword">catch</span> error { std.log(error) }
 }</code></pre>
           </div>
         </div>
@@ -106,12 +110,14 @@
             <button type="button" role="tab" aria-selected="false" aria-controls="tab-empty" id="button-empty" data-tab="empty">Empty mailbox</button>
           </div>
           <div id="tab-signal" role="tabpanel" aria-labelledby="button-signal" class="tab-panel is-active">
-            <pre><code><span class="code-keyword">routine</span> <span class="code-name">Producer</span>() {
+            <pre><code><span class="code-keyword">import</span> std
+
+<span class="code-keyword">routine</span> <span class="code-name">Producer</span>() {
   <span class="code-keyword">spawn</span> <span class="code-name">Inbox</span>(<span class="code-string">"new work"</span>)
 }
 
 <span class="code-keyword">loop</span> <span class="code-name">Inbox</span>() {
-  log(receive.value, receive.pending)
+  std.log(receive.value, receive.pending)
   <span class="code-keyword">terminate</span>
 }</code></pre>
           </div>
@@ -132,14 +138,14 @@ receive.pending <span class="code-comment">// 0</span></code></pre>
             <p class="eyebrow">Static analysis</p>
             <h2>Ask the compiler for one declaration’s cost.</h2>
             <p>The analyzer validates the source first, then reports the worst-case class for functions, routines, or one loop iteration.</p>
-            <div class="command-box"><code id="command-text">cargo run -- complexity programs/11_search_and_sort.proglang func bubble_sort</code><button class="copy-button" type="button" data-copy="#command-text">Copy</button></div>
+            <div class="command-box"><code id="command-text">cargo run -- complexity programs/11_search_and_sort.proglang func insertion_sort</code><button class="copy-button" type="button" data-copy="#command-text">Copy</button></div>
           </div>
           <div class="complexity-table" role="table" aria-label="Algorithm complexity examples">
             <div role="row" class="table-head"><span role="columnheader">Algorithm</span><span role="columnheader">Worst case</span></div>
             <div role="row"><span role="cell"><code>linear_search</code></span><span role="cell">O(N)</span></div>
             <div role="row"><span role="cell"><code>max_value</code></span><span role="cell">O(N)</span></div>
-            <div role="row"><span role="cell"><code>bubble_sort</code></span><span role="cell">O(N²)</span></div>
-            <div role="row"><span role="cell"><code>selection_sort</code></span><span role="cell">O(N²)</span></div>
+            <div role="row"><span role="cell"><code>insert_sorted</code></span><span role="cell">O(N)</span></div>
+            <div role="row"><span role="cell"><code>insertion_sort</code></span><span role="cell">O(N²)</span></div>
           </div>
         </div>
       </section>
@@ -149,7 +155,7 @@ receive.pending <span class="code-comment">// 0</span></code></pre>
         <ol>
           <li><code>cargo test</code><span>Run the language and runtime suite.</span></li>
           <li><code>cargo run -- programs/11_search_and_sort.proglang</code><span>Execute the algorithm fixture.</span></li>
-          <li><code>cargo run -- complexity programs/11_search_and_sort.proglang bubble_sort</code><span>Inspect a declaration’s complexity.</span></li>
+          <li><code>cargo run -- complexity programs/11_search_and_sort.proglang func insertion_sort</code><span>Inspect a declaration’s complexity.</span></li>
         </ol>
       </section>
     </main>

@@ -25,6 +25,8 @@ proglang/
 │   ├── 10_exceptions.proglang
 │   ├── 11_search_and_sort.proglang
 │   ├── 12_main_entry.proglang
+│   ├── 13_library_consumer.proglang
+│   ├── std.proglang               # Explicit runtime-backed standard library
 │   ├── invalid_01_dag_cycle.proglang
 │   ├── invalid_02_infinite_recursion.proglang
 │   ├── invalid_03_spawn_with_ref.proglang
@@ -86,13 +88,14 @@ queued work and preventing persistent loops from being scheduled again.
 // Package import
 import math
 import math.{Vector2D, multiply}
+import std
 
 // Variable declaration
 let x = 42
 let mut counter: Int = 0
 
 // Function call expression
-log("Hello, World!")
+std.log("Hello, World!")
 
 // Spawn a routine (passes arguments by deep copy)
 spawn ProcessItem(x)
@@ -149,16 +152,18 @@ them with `try/catch`. Routines and loops may catch exceptions but cannot
 throw them directly:
 
 ```proglang
+import std
+
 func parse(value: String) {
     try {
         throw "invalid input"
     } catch error {
-        log(error)
+        std.log(error)
     }
 }
 
 routine Worker(value: String) {
-    try { parse(value) } catch error { log(error) }
+    try { parse(value) } catch error { std.log(error) }
 }
 ```
 
@@ -166,10 +171,30 @@ routine Worker(value: String) {
 
 [11_search_and_sort.proglang](programs/11_search_and_sort.proglang) is a
 runnable fixture over literal integer lists. It demonstrates linear search and
-maximum (`O(N)` worst case), plus bubble sort and selection sort (`O(N²)` worst
-case). The integration test executes the fixture and checks its output; the
-static-analysis test checks those same bounds against the usual literature
-classes.
+maximum (`O(N)` worst case), `insert_sorted` (`O(N)`), and insertion sort
+(`O(N²)` worst case). Its `import std` is explicit: `std.equals`, `std.max`,
+`std.empty`, and `std.prepend` are package declarations backed by the runtime,
+while the algorithms themselves are ordinary ProgLang functions. The integration
+test executes their results; the static-analysis test checks those bounds against
+the usual literature classes.
+The `std` package is closed: it exposes only certified terminating primitives
+over finite values, including `std.log` for a finite terminal emission; it
+cannot contain routines, loops, imports, or user-defined bodies, and must be
+imported explicitly.
+
+### Programas executáveis e bibliotecas
+
+Arquivos com `routine main()` são executáveis: o runtime inicia somente essa
+rotina. Os demais arquivos em `programs/` são bibliotecas/fixtures de
+compilação e não disparam trabalho ao serem chamados diretamente. Todo exemplo
+que emite texto importa `std` e usa `std.log(...)`; não há mais logging implícito
+do runtime. A suíte executa todos os arquivos válidos e verifica as saídas dos
+exemplos com `main`.
+
+Uma biblioteca cujo arquivo começa com número pode ser importada pelo nome
+entre aspas, por exemplo `import "03_structural_recursion"`. O programa
+[`13_library_consumer.proglang`](programs/13_library_consumer.proglang) executa
+funções dessa biblioteca importada.
 Functions are the only declarations that return values; routines and loops do
 not have return values.
 

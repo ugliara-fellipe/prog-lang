@@ -1,4 +1,5 @@
 // ============================================================
+import std
 // invalid_03_spawn_with_ref.proglang
 // Negative Test: Memory Confinement and References (Ref[T])
 //
@@ -11,7 +12,7 @@
 // ============================================================
 
 routine TargetWorker(ptr: Ref[Int]) {
-    log("Worker attempting to read shared pointer:", ptr)
+    std.log("Worker attempting to read shared pointer:", ptr)
 }
 
 routine PointerCreator() {

@@ -1,0 +1,9 @@
+// An executable program can import a library fixture by its quoted filename.
+// Libraries have no `main`; their functions become available after import.
+import "03_structural_recursion"
+import std
+
+routine main() {
+    std.log("sum from imported library:", sum_list([4, 5, 6]))
+    std.log("count from imported library:", count_elements([4, 5, 6]))
+}

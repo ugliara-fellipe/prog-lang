@@ -1,15 +1,16 @@
 // Only `routine main()` is started when this file is executed.
+import std
 
 routine main() {
-    log("main started")
+    std.log("main started")
     spawn Worker()
 }
 
 routine Worker() {
-    log("worker finished")
+    std.log("worker finished")
 }
 
 // This routine is part of the program/library API but is not started.
 routine Unused() {
-    log("this must not run")
+    std.log("this must not run")
 }

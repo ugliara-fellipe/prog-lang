@@ -444,7 +444,24 @@ impl<'a> Parser<'a> {
 
     fn parse_import_decl(&mut self) -> Result<ImportDecl, ParseError> {
         self.expect(TokenKind::Import)?;
-        let package = self.expect_id()?;
+        // A quoted package stem permits importing fixture/libraries whose
+        // filename begins with a digit, such as "03_structural_recursion".
+        // Ordinary identifier imports retain the concise `import math` form.
+        let package = match &self.current.kind {
+            TokenKind::Id(_) => self.expect_id()?,
+            TokenKind::Str(value) => {
+                let value = value.clone();
+                self.advance()?;
+                value
+            }
+            _ => {
+                return Err(ParseError::SyntaxError {
+                    line: self.current.line,
+                    col: self.current.col,
+                    message: "Expected package identifier or quoted package filename".to_string(),
+                });
+            }
+        };
 
         let kind = if self.check(&TokenKind::Dot) {
             self.advance()?;
@@ -801,6 +818,11 @@ impl<'a> Parser<'a> {
             }
             self.expect(TokenKind::RParen)?;
             Ok(Pattern::Constructor(name, sub_pats))
+        } else if matches!(name.as_str(), "Nil" | "True" | "False") {
+            // These are zero-argument constructors, not variable bindings.
+            // Keeping them as constructors lets the runtime distinguish an
+            // empty list (or boolean branch) from a catch-all identifier.
+            Ok(Pattern::Constructor(name, Vec::new()))
         } else {
             Ok(Pattern::Identifier(name))
         }

@@ -26,6 +26,9 @@ pub enum SemanticError {
     #[error("Undeclared symbol: {0}")]
     UndeclaredSymbol(String),
 
+    #[error("Standard-library function '{0}' requires an explicit import")]
+    MissingStandardLibraryImport(String),
+
     #[error("'terminate' may only be used inside a loop")]
     TerminateOutsideLoop,
 

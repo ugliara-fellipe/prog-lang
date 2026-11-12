@@ -1,5 +1,6 @@
 // Signals are sent asynchronously to the mailbox of a named loop.
 // The runtime drains Inbox's mailbox before each iteration of this loop.
+import std
 
 routine Producer() {
     // A value passed to `spawn` for a loop is delivered as a signal.
@@ -8,7 +9,11 @@ routine Producer() {
 
 loop Inbox() {
     // At iteration start `receive` consumes one queued signal.
-    log("received:", receive.value, "still pending:", receive.pending)
+    std.log("received:", receive.value, "still pending:", receive.pending)
 
     terminate
+}
+
+routine main() {
+    spawn Producer()
 }

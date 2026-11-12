@@ -1,5 +1,12 @@
 // A loop iteration is scheduled on the same queue as routines. Without
 // `terminate`, reaching the end of the body schedules the next iteration.
+import std
+
 loop OneShotPoller() {
+    std.log("poller finished its finite iteration")
     terminate
+}
+
+routine main() {
+    spawn OneShotPoller()
 }

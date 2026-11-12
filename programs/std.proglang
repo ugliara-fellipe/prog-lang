@@ -1,0 +1,13 @@
+// Explicit standard-library declarations.
+// Every operation below is a certified terminating primitive over finite,
+// already-materialized values. Their qualified `std.*` implementations are
+// provided by the runtime; user source must import this package to use them.
+
+func equals(left: Int, right: Int) -> Bool {}
+func less_or_equal(left: Int, right: Int) -> Bool {}
+func max(left: Int, right: Int) -> Int {}
+func empty() -> List[Int] {}
+func prepend(value: Int, items: List[Int]) -> List[Int] {}
+// `std.log` accepts a finite list of values at a call site; this signature
+// documents its first printable value and its runtime primitive emits output.
+func log(message: String) {}

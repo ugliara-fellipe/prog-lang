@@ -332,6 +332,13 @@ async fn execute_runtime(program: &Program, verbose: bool) -> Result<(), Box<dyn
         let shutdown_handle = event_loop.shutdown_handle();
         let actor_handle = ActorHandle::new(tx);
 
+        for function in program.declarations.iter().filter_map(|decl| match decl {
+            TopLevelDecl::Func(function) => Some(function),
+            _ => None,
+        }) {
+            signal_router.register_function(function.clone());
+        }
+
         for routine in program.declarations.iter().filter_map(|decl| match decl {
             TopLevelDecl::Routine(r) => Some(r),
             _ => None,

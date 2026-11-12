@@ -10,14 +10,21 @@ This directory contains a suite of programs written in **ProgLang** (`.proglang`
 
 | File | Features Covered |
 |---|---|
-| [`00_hello_world.proglang`](00_hello_world.proglang) | Classic introductory program: pure function, routine with no arguments, $O(1)$ isolated Arena memory allocation (`Ref[String]`), and terminal printing via `log(...)`. |
+| [`00_hello_world.proglang`](00_hello_world.proglang) | Executable introductory program: pure function, routine with no arguments, $O(1)$ isolated Arena memory allocation (`Ref[String]`), and terminal printing via explicit `std.log(...)`. |
 | [`01_structs_and_functions.proglang`](01_structs_and_functions.proglang) | Declaration of immutable data structs (`type`), pure functions (`func`), type annotations, immutable and mutable variables (`let`, `let mut`), arithmetic (`+`, `-`, `*`), relational (`==`) operators, and field access (`.`). |
 | [`02_bounded_loops.proglang`](02_bounded_loops.proglang) | Strictly bounded iteration loops (`for x in collection`), guaranteed finite termination without `while`. |
 | [`03_structural_recursion.proglang`](03_structural_recursion.proglang) | Structural induction on inductive data types (`List[T]`), pattern matching (`match`) with constructors (`Cons`, `Nil`), formal proof of decreasing recursive calls (`tail`). |
 | [`04_actors_concurrency_spawn.proglang`](04_actors_concurrency_spawn.proglang) | Actor model with pure value-copy semantics, routine declarations (`routine`), asynchronous dispatch via `spawn`, concurrent actor dispatch inside bounded loops. |
 | [`05_arenas_and_local_refs.proglang`](05_arenas_and_local_refs.proglang) | Routine-level $O(1)$ Arena memory management, local mutable references (`Ref[T]` and `ref` operator), instant $O(1)$ deallocation upon routine termination with Zero GC pauses. |
 | [`06_full_pipeline.proglang`](06_full_pipeline.proglang) | Full end-to-end integration: recursive inductive data structs, pure recursive functions, concurrent actor routines, routine-local Arena, pattern matching, and recursive subtask spawns. |
-| [`07_packages_and_imports.proglang`](07_packages_and_imports.proglang) | Package system and module imports: whole package import (`import math`), specific item imports (`import math.{Vector2D, multiply}`), cross-module function calls and routine spawns. |
+| [`07_packages_and_imports.proglang`](07_packages_and_imports.proglang) | Executable package-import example: whole package import (`import math`), specific item imports (`import math.{Vector2D, multiply}`), explicit `std` import, and cross-module function calls. |
+| [`08_persistent_loop.proglang`](08_persistent_loop.proglang) | Executable one-iteration persistent-loop example. |
+| [`09_loop_signals.proglang`](09_loop_signals.proglang) | Executable signal producer/consumer example with `receive.value` and `receive.pending`. |
+| [`10_exceptions.proglang`](10_exceptions.proglang) | Executable exception-boundary example with functions, routines, and loops. |
+| [`11_search_and_sort.proglang`](11_search_and_sort.proglang) | Executable recursive algorithms using explicit certified `std` primitives. |
+| [`12_main_entry.proglang`](12_main_entry.proglang) | Executable entry-point example; only `main` is dispatched automatically. |
+| [`13_library_consumer.proglang`](13_library_consumer.proglang) | Executable consumer of `03_structural_recursion.proglang` via quoted package import. |
+| [`math.proglang`](math.proglang) and [`std.proglang`](std.proglang) | Libraries: they have no `main` and become available only through explicit imports. |
 
 ---
 

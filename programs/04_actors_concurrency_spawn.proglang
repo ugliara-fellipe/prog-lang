@@ -1,4 +1,5 @@
 // ============================================================
+import std
 // 04_actors_concurrency_spawn.proglang
 // Feature Coverage:
 // - Concurrent actor model with pure value semantics
@@ -14,12 +15,12 @@ type JobMessage {
 }
 
 routine TaskWorker(job: JobMessage) {
-    log("Worker executing job ID:", job.job_id)
-    log("Job payload content:", job.payload)
+    std.log("Worker executing job ID:", job.job_id)
+    std.log("Job payload content:", job.payload)
 }
 
 routine QueueManager(batch: List[JobMessage]) {
-    log("Starting dispatch of concurrent jobs")
+    std.log("Starting dispatch of concurrent jobs")
 
     for job in batch {
         // 'job' is cloned by value into the new isolated routine

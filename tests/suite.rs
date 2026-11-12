@@ -7,7 +7,9 @@ use std::process::Command;
 
 fn compile_and_validate(source: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut parser = Parser::new(source)?;
-    let program = parser.parse_program()?;
+    let raw_program = parser.parse_program()?;
+    let mut packages = proglang::semantic::packages::PackageManager::new("programs");
+    let program = packages.resolve_program(raw_program)?;
 
     let mut dag_validator = CallGraphValidator::new();
     dag_validator.build_and_validate(&program)?;
@@ -101,22 +103,29 @@ fn test_program_10_exceptions() {
 #[test]
 fn test_program_11_search_and_sort_match_literature_worst_case_complexities() {
     let code = include_str!("../programs/11_search_and_sort.proglang");
-    assert!(compile_and_validate(code).is_ok());
-
     let mut parser = Parser::new(code).unwrap();
-    let program = parser.parse_program().unwrap();
+    let raw_program = parser.parse_program().unwrap();
+    let mut packages = proglang::semantic::packages::PackageManager::new("programs");
+    let program = packages.resolve_program(raw_program).unwrap();
+
+    let mut dag_validator = CallGraphValidator::new();
+    assert!(dag_validator.build_and_validate(&program).is_ok());
+    let mut type_checker = TypeChecker::new();
+    assert!(type_checker.check_program(&program).is_ok());
+    assert!(TerminationChecker::verify_program(&program).is_ok());
+
     let entries = proglang::semantic::complexity::ComplexityAnalyzer::new().analyze(&program);
     let complexities: std::collections::HashMap<_, _> = entries
         .into_iter()
         .map(|entry| (entry.name, entry.complexity.to_big_o()))
         .collect();
 
-    // Linear search and maximum scan each element once; bubble and selection
-    // sort compare element pairs. These are their standard worst-case bounds.
+    // Linear search and maximum scan each element once. Insertion sort calls
+    // an O(N) insertion once per element, yielding the standard O(N²) bound.
     assert_eq!(complexities.get("linear_search"), Some(&"O(N)".to_string()));
     assert_eq!(complexities.get("max_value"), Some(&"O(N)".to_string()));
-    assert_eq!(complexities.get("bubble_sort"), Some(&"O(N²)".to_string()));
-    assert_eq!(complexities.get("selection_sort"), Some(&"O(N²)".to_string()));
+    assert_eq!(complexities.get("insert_sorted"), Some(&"O(N)".to_string()));
+    assert_eq!(complexities.get("insertion_sort"), Some(&"O(N²)".to_string()));
 }
 
 #[test]
@@ -130,14 +139,73 @@ fn test_program_11_executes_search_and_sort_algorithms() {
     assert!(stdout.contains("linear search for 7: true"));
     assert!(stdout.contains("linear search for 8: false"));
     assert!(stdout.contains("maximum: 9"));
-    assert!(stdout.contains("bubble sort: [1, 2, 7, 9]"));
-    assert!(stdout.contains("selection sort: [1, 2, 7, 9]"));
+    assert!(stdout.contains("insertion sort: [1, 2, 7, 9]"));
 }
 
 #[test]
 fn test_program_12_main_entry() {
     let code = include_str!("../programs/12_main_entry.proglang");
     assert!(compile_and_validate(code).is_ok());
+}
+
+/// Every non-negative fixture is either executable (`main`) or a library.
+/// The compiler must accept both forms after resolving their explicit imports.
+#[test]
+fn test_all_valid_programs_compile_as_programs_or_libraries() {
+    let fixtures = [
+        "00_hello_world.proglang",
+        "01_structs_and_functions.proglang",
+        "02_bounded_loops.proglang",
+        "03_structural_recursion.proglang",
+        "04_actors_concurrency_spawn.proglang",
+        "05_arenas_and_local_refs.proglang",
+        "06_full_pipeline.proglang",
+        "07_packages_and_imports.proglang",
+        "08_persistent_loop.proglang",
+        "09_loop_signals.proglang",
+        "10_exceptions.proglang",
+        "11_search_and_sort.proglang",
+        "12_main_entry.proglang",
+        "13_library_consumer.proglang",
+        "math.proglang",
+        "std.proglang",
+    ];
+
+    for fixture in fixtures {
+        let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
+            .arg(format!("programs/{fixture}"))
+            .output()
+            .expect("run valid fixture");
+        assert!(
+            output.status.success(),
+            "{fixture} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn test_executable_examples_dispatch_their_main_routines() {
+    let fixtures = [
+        ("00_hello_world.proglang", "Hello, World!"),
+        ("07_packages_and_imports.proglang", "Sum via qualified import: 30"),
+        ("08_persistent_loop.proglang", "poller finished its finite iteration"),
+        ("09_loop_signals.proglang", "received: new work is available still pending: 0"),
+        ("10_exceptions.proglang", "starting exception monitor"),
+        ("13_library_consumer.proglang", "sum from imported library: 15"),
+    ];
+
+    for (fixture, expected_output) in fixtures {
+        let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
+            .arg(format!("programs/{fixture}"))
+            .output()
+            .expect("run executable fixture");
+        assert!(output.status.success(), "{fixture} did not execute");
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(expected_output),
+            "{fixture} did not produce expected output '{expected_output}'"
+        );
+    }
 }
 
 /// The real executable must dispatch only `main`, wait for its spawned work,
@@ -170,11 +238,45 @@ fn test_library_without_main_does_not_dispatch_runtime_work() {
 #[test]
 fn test_complexity_cli_reports_requested_declaration() {
     let output = Command::new(env!("CARGO_BIN_EXE_proglang"))
-        .args(["complexity", "programs/11_search_and_sort.proglang", "func", "bubble_sort"])
+        .args(["complexity", "programs/11_search_and_sort.proglang", "func", "insertion_sort"])
         .output()
         .expect("run complexity CLI");
     assert!(output.status.success());
-    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "func bubble_sort: O(N²)");
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "func insertion_sort: O(N²)");
+}
+
+#[test]
+fn test_runtime_backed_standard_library_functions_require_an_import() {
+    let code = r#"
+routine main() {
+    log(std.empty())
+}
+"#;
+    let mut parser = Parser::new(code).expect("Parser should initialize");
+    let program = parser.parse_program().expect("Parse program");
+    let error = TypeChecker::new().check_program(&program).expect_err("std must be imported");
+    assert_eq!(error, SemanticError::MissingStandardLibraryImport("std.empty".to_string()));
+}
+
+#[test]
+fn test_std_package_contains_only_certified_terminating_primitives() {
+    let mut parser = Parser::new(include_str!("../programs/std.proglang"))
+        .expect("Parser should initialize");
+    let program = parser.parse_program().expect("Parse std package");
+    assert!(proglang::stdlib::validate_standard_library(&program).is_ok());
+
+    let declared: Vec<_> = program
+        .declarations
+        .iter()
+        .filter_map(|declaration| match declaration {
+            proglang::ast::TopLevelDecl::Func(function) => Some(format!("std.{}", function.name)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(declared.len(), proglang::stdlib::TOTAL_STANDARD_FUNCTIONS.len());
+    assert!(declared
+        .iter()
+        .all(|name| proglang::stdlib::is_total_standard_function(name)));
 }
 
 #[test]

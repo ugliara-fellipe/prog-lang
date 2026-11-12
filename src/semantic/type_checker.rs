@@ -123,6 +123,7 @@ impl TypeChecker {
     /// true exclusively for function bodies; `try/catch` itself is valid in
     /// every context, but a direct `throw` is not valid in routines or loops.
     fn check_stmt(&mut self, stmt: &Statement, allows_throw: bool) -> Result<(), SemanticError> {
+        Self::validate_standard_library_calls(stmt, &self.functions)?;
         match stmt {
             Statement::Spawn(expr) => {
                 // Spawn arguments must be copyable (no Ref).
@@ -185,25 +186,27 @@ impl TypeChecker {
             Statement::ExprStmt(expr) => {
                 // Validate calls to user‑defined functions.
                 if let Expr::FunctionCall { name, args } = expr {
-                    if let Some(func) = self.functions.get(name) {
-                        // Argument count check.
-                        if args.len() != func.params.len() {
-                            return Err(SemanticError::ArgumentCountMismatch {
-                                function: name.clone(),
-                                expected: func.params.len(),
-                                found: args.len(),
-                            });
-                        }
-                        // Type compatibility – the language rules allow:
-                        //   type → type   (copy)
-                        //   type → Ref    (create ref)
-                        //   Ref  → type   (copy dereferenced value)
-                        //   Ref  → Ref    (copy reference)
-                        // Therefore we only need to make sure each argument can be typed.
-                        for (arg_expr, param) in args.iter().zip(&func.params) {
-                            let _arg_type = self.infer_type(arg_expr);
-                            let _param_type = &param.param_type;
-                            // No error emitted – the semantics already permit these conversions.
+                    if !crate::stdlib::is_total_standard_function(name) {
+                        if let Some(func) = self.functions.get(name) {
+                            // Argument count check.
+                            if args.len() != func.params.len() {
+                                return Err(SemanticError::ArgumentCountMismatch {
+                                    function: name.clone(),
+                                    expected: func.params.len(),
+                                    found: args.len(),
+                                });
+                            }
+                            // Type compatibility – the language rules allow:
+                            //   type → type   (copy)
+                            //   type → Ref    (create ref)
+                            //   Ref  → type   (copy dereferenced value)
+                            //   Ref  → Ref    (copy reference)
+                            // Therefore we only need to make sure each argument can be typed.
+                            for (arg_expr, param) in args.iter().zip(&func.params) {
+                                let _arg_type = self.infer_type(arg_expr);
+                                let _param_type = &param.param_type;
+                                // No error emitted – the semantics already permit these conversions.
+                            }
                         }
                     }
                 }
@@ -211,6 +214,79 @@ impl TypeChecker {
             Statement::Terminate => {}
         }
         Ok(())
+    }
+
+    /// Runtime-backed operations live in ordinary packages.  A qualified
+    /// `std.*` call is legal only when package resolution has added its
+    /// declaration to the program, which requires `import std` in source.
+    fn validate_standard_library_calls(
+        statement: &Statement,
+        functions: &HashMap<String, FuncDecl>,
+    ) -> Result<(), SemanticError> {
+        fn expression_is_imported(
+            expression: &Expr,
+            functions: &HashMap<String, FuncDecl>,
+        ) -> Result<(), SemanticError> {
+            match expression {
+                Expr::FunctionCall { name, args } => {
+                    if name.starts_with("std.")
+                        && (!crate::stdlib::is_total_standard_function(name)
+                            || !functions.contains_key(name))
+                    {
+                        return Err(SemanticError::MissingStandardLibraryImport(name.clone()));
+                    }
+                    for argument in args {
+                        expression_is_imported(argument, functions)?;
+                    }
+                }
+                Expr::BinaryOp { left, right, .. } => {
+                    expression_is_imported(left, functions)?;
+                    expression_is_imported(right, functions)?;
+                }
+                Expr::MemberAccess { target, .. } | Expr::RefCreate(target) => {
+                    expression_is_imported(target, functions)?;
+                }
+                Expr::ListLiteral(items) => {
+                    for item in items {
+                        expression_is_imported(item, functions)?;
+                    }
+                }
+                Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::Variable(_) | Expr::ReceiveSignal => {}
+            }
+            Ok(())
+        }
+
+        match statement {
+            Statement::ExprStmt(expression) | Statement::Spawn(expression) | Statement::Throw(expression) => {
+                expression_is_imported(expression, functions)
+            }
+            Statement::Signal { payload, .. } | Statement::VarDecl { value: payload, .. } => {
+                expression_is_imported(payload, functions)
+            }
+            Statement::ForLoop { collection, body, .. } => {
+                expression_is_imported(collection, functions)?;
+                for statement in body {
+                    Self::validate_standard_library_calls(statement, functions)?;
+                }
+                Ok(())
+            }
+            Statement::Match { target, cases } => {
+                expression_is_imported(target, functions)?;
+                for case in cases {
+                    for statement in &case.body {
+                        Self::validate_standard_library_calls(statement, functions)?;
+                    }
+                }
+                Ok(())
+            }
+            Statement::TryCatch { try_body, catch_body, .. } => {
+                for statement in try_body.iter().chain(catch_body) {
+                    Self::validate_standard_library_calls(statement, functions)?;
+                }
+                Ok(())
+            }
+            Statement::Terminate => Ok(()),
+        }
     }
 
     /// Compute the static type of an expression.

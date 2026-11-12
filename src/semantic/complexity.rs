@@ -107,9 +107,13 @@ impl ComplexityAnalyzer {
         for decl in &program.declarations {
             match decl {
                 TopLevelDecl::Func(f) => {
-                    // A structurally-recursive function over a List/Tree → O(N).
+                    // A structurally-recursive function over a List/Tree is
+                    // O(N) plus the most expensive already-known helper it
+                    // calls on each recursive step.  This captures patterns
+                    // such as insertion sort: `insertion_sort` calls the
+                    // O(N) helper `insert_sorted` once per input element.
                     let complexity = if recursive_funcs.contains(&f.name) {
-                        Complexity::Polynomial(1)
+                        self.recursive_complexity(f, &recursive_funcs)
                     } else {
                         self.complexity_of_body(&f.body, &recursive_funcs)
                     };
@@ -154,6 +158,94 @@ impl ComplexityAnalyzer {
             }
         }
         false
+    }
+
+    fn recursive_complexity(
+        &self,
+        func: &FuncDecl,
+        recursive: &std::collections::HashSet<String>,
+    ) -> Complexity {
+        let helper_cost = Self::called_function_names(&func.body)
+            .into_iter()
+            .filter(|name| name != &func.name)
+            .map(|name| {
+                self.cache.get(&name).cloned().unwrap_or_else(|| {
+                    if recursive.contains(&name) {
+                        Complexity::Polynomial(1)
+                    } else {
+                        Complexity::Constant
+                    }
+                })
+            })
+            .fold(Complexity::Constant, |acc, cost| acc.max(&cost));
+
+        match helper_cost {
+            Complexity::Constant => Complexity::Polynomial(1),
+            Complexity::Polynomial(power) => Complexity::Polynomial(power + 1),
+        }
+    }
+
+    fn called_function_names(body: &[Statement]) -> Vec<String> {
+        let mut names = Vec::new();
+        for statement in body {
+            Self::collect_call_names_from_stmt(statement, &mut names);
+        }
+        names
+    }
+
+    fn collect_call_names_from_stmt(statement: &Statement, names: &mut Vec<String>) {
+        match statement {
+            Statement::ExprStmt(expr) | Statement::Spawn(expr) | Statement::Throw(expr) => {
+                Self::collect_call_names_from_expr(expr, names);
+            }
+            Statement::Signal { payload, .. } | Statement::VarDecl { value: payload, .. } => {
+                Self::collect_call_names_from_expr(payload, names);
+            }
+            Statement::TryCatch { try_body, catch_body, .. } => {
+                for statement in try_body.iter().chain(catch_body) {
+                    Self::collect_call_names_from_stmt(statement, names);
+                }
+            }
+            Statement::ForLoop { collection, body, .. } => {
+                Self::collect_call_names_from_expr(collection, names);
+                for statement in body {
+                    Self::collect_call_names_from_stmt(statement, names);
+                }
+            }
+            Statement::Match { target, cases } => {
+                Self::collect_call_names_from_expr(target, names);
+                for case in cases {
+                    for statement in &case.body {
+                        Self::collect_call_names_from_stmt(statement, names);
+                    }
+                }
+            }
+            Statement::Terminate => {}
+        }
+    }
+
+    fn collect_call_names_from_expr(expression: &Expr, names: &mut Vec<String>) {
+        match expression {
+            Expr::FunctionCall { name, args } => {
+                names.push(name.clone());
+                for argument in args {
+                    Self::collect_call_names_from_expr(argument, names);
+                }
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                Self::collect_call_names_from_expr(left, names);
+                Self::collect_call_names_from_expr(right, names);
+            }
+            Expr::MemberAccess { target, .. } | Expr::RefCreate(target) => {
+                Self::collect_call_names_from_expr(target, names);
+            }
+            Expr::ListLiteral(items) => {
+                for item in items {
+                    Self::collect_call_names_from_expr(item, names);
+                }
+            }
+            Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::Variable(_) | Expr::ReceiveSignal => {}
+        }
     }
 
     fn stmt_calls(name: &str, stmt: &Statement) -> bool {

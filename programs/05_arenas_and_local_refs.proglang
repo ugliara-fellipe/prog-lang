@@ -1,4 +1,5 @@
 // ============================================================
+import std
 // 05_arenas_and_local_refs.proglang
 // Feature Coverage:
 // - Per-routine Arena-based memory management
@@ -17,7 +18,7 @@ routine ArenaMemoryProcessor(data: Metrics) {
     let mut ref_counter: Ref[Int] = ref data.counter
     let mut ref_label: Ref[String] = ref data.label
 
-    log("Routine executing with isolated pointers in Arena:", data.label)
+    std.log("Routine executing with isolated pointers in Arena:", data.label)
 
     // Confinement: 'ref_counter' cannot cross routine boundaries.
     // Upon completion, entire Arena is destroyed in O(1).

@@ -1,4 +1,5 @@
 // ============================================================
+import std
 // 00_hello_world.proglang
 // Hello World Program in ProgLang
 //
@@ -6,7 +7,7 @@
 // - Pure function returning String
 // - Isolated routine ('routine HelloWorld()')
 // - Fast O(1) memory allocation on routine Arena
-// - Terminal logging via log(...)
+// - Terminal logging via explicitly imported std.log(...)
 // - Instant O(1) Arena deallocation on routine exit
 // ============================================================
 
@@ -19,5 +20,10 @@ routine HelloWorld() {
     let ref_msg: Ref[String] = ref get_message()
 
     // Terminal print
-    log("Hello, World!")
+    std.log("Hello, World!")
+}
+
+// This tutorial is executable; only `main` starts automatically.
+routine main() {
+    spawn HelloWorld()
 }

@@ -9,7 +9,7 @@ program
     ;
 
 importDecl
-    : 'import' ID ('.' (ID | '{' importItemList '}'))?
+    : 'import' (ID | STRING) ('.' (ID | '{' importItemList '}'))?
     ;
 
 importItemList

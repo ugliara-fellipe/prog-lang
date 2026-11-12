@@ -1,4 +1,5 @@
 // ============================================================
+import std
 // 02_bounded_loops.proglang
 // Feature Coverage:
 // - Strictly bounded repetition loops ('for ... in')
@@ -16,10 +17,10 @@ routine ProcessBatch(batch: BatchData) {
     let mut total_processed: Ref[Int] = ref 0
     
     for item in batch.items {
-        log("Processing batch item:", item)
+        std.log("Processing batch item:", item)
     }
 
     for other in batch.items {
-        log("Checking item consistency:", other)
+        std.log("Checking item consistency:", other)
     }
 }

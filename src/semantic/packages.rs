@@ -211,6 +211,13 @@ impl PackageManager {
             ))
         })?;
 
+        // `std` is privileged because its declarations map to runtime code.
+        // Keep that surface closed to primitives that are certified finite.
+        if pkg_name == "std" {
+            crate::stdlib::validate_standard_library(&raw_prog)
+                .map_err(SemanticError::PackageError)?;
+        }
+
         // Recursively resolve imports of the imported package
         let mut pkg_manager = PackageManager::new(&self.base_dir);
         let resolved_prog = pkg_manager.resolve_program(raw_prog)?;
@@ -222,6 +229,19 @@ impl PackageManager {
     }
 
     fn find_package_file(&self, pkg_name: &str) -> Result<PathBuf, SemanticError> {
+        // Quoted imports may start with digits, but they are still package
+        // stems rather than paths. Restricting the character set prevents an
+        // import from escaping the configured package directory.
+        if pkg_name.is_empty()
+            || !pkg_name
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            return Err(SemanticError::PackageError(format!(
+                "Invalid package name '{}': use letters, digits, and underscores only",
+                pkg_name
+            )));
+        }
         // Look for:
         // 1. base_dir / <pkg_name>.proglang
         // 2. base_dir / <pkg_name>.prolang

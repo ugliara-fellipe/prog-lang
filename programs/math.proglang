@@ -1,5 +1,6 @@
 // Package: math
 // Provides types and utility functions
+import std
 
 type Vector2D {
     x: Int,
@@ -16,6 +17,6 @@ func multiply(a: Int, b: Int) -> Int {
 
 routine ComputeWorker(val: Int) {
     let res = add(val, 10)
-    log("Worker computed:", res)
+    std.log("Worker computed:", res)
 }
 

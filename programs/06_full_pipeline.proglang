@@ -1,4 +1,5 @@
 // ============================================================
+import std
 // 06_full_pipeline.proglang
 // Feature Coverage (Full Integration):
 // - Structured inductive data types
@@ -33,12 +34,12 @@ routine TaskExecutor(task: Task) {
     // Local allocation in routine Arena
     let mut ref_local: Ref[Int] = ref count_subtasks(task)
     
-    log("Processing task ID:", task.id)
+    std.log("Processing task ID:", task.id)
 
     // Work division: recursive spawn with structurally smaller subcomponent
     match task.subtasks {
         Nil => {
-            log("Leaf node reached")
+            std.log("Leaf node reached")
         },
         Cons(head, tail) => {
             // 'head' is strictly smaller than 'task'
