@@ -5,12 +5,14 @@ pub enum TypeSpec {
     Primitive(String),
     Generic(String, Vec<TypeSpec>),
     Ref(Box<TypeSpec>),
+    Function(Vec<TypeSpec>, Box<TypeSpec>),
 }
 
 impl TypeSpec {
     pub fn is_copyable(&self) -> bool {
         match self {
             TypeSpec::Ref(_) => false,
+            TypeSpec::Function(_, _) => true,
             TypeSpec::Primitive(_) => true,
             TypeSpec::Generic(name, inner) => {
                 name != "Ref" && inner.iter().all(|t| t.is_copyable())
@@ -53,6 +55,10 @@ pub enum Expr {
     MemoryGet(String),
     RefCreate(Box<Expr>),
     FunctionCall { name: String, args: Vec<Expr> },
+    /// Calls the function value produced by an expression.
+    IndirectCall { target: Box<Expr>, args: Vec<Expr> },
+    /// Explicit instantiation of a generic named function, e.g. `id<Int>`.
+    Specialize { target: Box<Expr>, type_args: Vec<TypeSpec> },
     MemberAccess { target: Box<Expr>, field: String },
     BinaryOp { op: String, left: Box<Expr>, right: Box<Expr> },
 }
@@ -102,6 +108,8 @@ pub enum Statement {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FuncDecl {
     pub name: String,
+    #[serde(default)]
+    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Option<TypeSpec>,
     pub body: Vec<Statement>,
@@ -110,6 +118,8 @@ pub struct FuncDecl {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutineDecl {
     pub name: String,
+    #[serde(default)]
+    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub body: Vec<Statement>,
 }
@@ -125,6 +135,8 @@ pub struct LoopDecl {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TypeDecl {
     pub name: String,
+    #[serde(default)]
+    pub type_params: Vec<String>,
     pub fields: Vec<StructField>,
 }
 

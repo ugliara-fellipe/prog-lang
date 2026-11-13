@@ -59,9 +59,10 @@ impl RuntimeEventLoop {
         // The input channel is closed after `main` is dispatched. Internal
         // spawns go directly to the shared pool, so wait until every routine
         // and every active loop has completed before ending the program.
-        while !self.pool.is_idle() && !self.pool.is_shutdown() {
+        while !self.pool.is_idle() && !self.pool.is_shutdown() && !self.signal_router.has_errors() {
             tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         }
+        if self.signal_router.has_errors() { self.pool.shutdown(); }
     }
 }
 

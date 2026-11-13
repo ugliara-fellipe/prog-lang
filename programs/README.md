@@ -24,6 +24,8 @@ This directory contains a suite of programs written in **Lia** (`.lia`), designe
 | [`11_search_and_sort.lia`](11_search_and_sort.lia) | Executable recursive algorithms using explicit certified `std` primitives. |
 | [`12_main_entry.lia`](12_main_entry.lia) | Executable entry-point example; only `main` is dispatched automatically. |
 | [`13_library_consumer.lia`](13_library_consumer.lia) | Executable consumer of `03_structural_recursion.lia` via quoted package import. |
+| [`14_type_of.lia`](14_type_of.lia) | Type introspection for local values. |
+| [`15_higher_order.lia`](15_higher_order.lia) | Function arguments, returns, local copies, lists, patterns, chained calls, and copied callback arguments in `spawn`. |
 | [`math.lia`](math.lia) and [`std.lia`](std.lia) | Libraries: they have no `main` and become available only through explicit imports. |
 
 ---

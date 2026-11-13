@@ -225,6 +225,29 @@ loop Counter() {
 See [`programs/09_loop_signals.lia`](programs/09_loop_signals.lia)
 for a routine that emits a signal and a persistent loop that consumes it.
 
+### Higher-order functions
+
+Named functions without captured state can be passed, returned, stored in
+variables or lists, and copied into routine arguments through `spawn`:
+
+```lia
+func double(x: Int) -> Int { x * 2 }
+func apply(f: (Int) -> Int, x: Int) -> Int { f(x) }
+func choose() -> (Int) -> Int { double }
+routine Worker(f: (Int) -> Int) { f(5) }
+routine main() {
+    let copy: (Int) -> Int = double
+    let result = apply(copy, choose()(3))
+    spawn Worker(copy)
+}
+```
+
+The compiler propagates possible function targets to a fixed point and uses
+them for cycle, termination, and complexity checks. Unresolved indirect calls
+and indirect cycles are rejected. Capturing closures and generic functions
+remain separate features. See the [mathematical model](ORDEM_SUPERIOR.md) and
+[executable example](programs/15_higher_order.lia).
+
 ### Copy / Reference Assignment Rules
 
 The same rules apply to variable assignments **and** function arguments:

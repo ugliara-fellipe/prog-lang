@@ -139,7 +139,7 @@ fn query_complexity(
     TerminationChecker::verify_program(&program)?;
 
     let kind = requested_kind.map(normalize_complexity_kind).transpose()?;
-    let entries = ComplexityAnalyzer::new().analyze(&program);
+    let entries = ComplexityAnalyzer::new().try_analyze(&program)?;
     let matches: Vec<_> = entries
         .iter()
         .filter(|entry| entry.name == name && kind.map_or(true, |kind| entry.kind == kind))
@@ -208,6 +208,11 @@ async fn run_compiled_artifact(artifact_path: &str, verbose: bool) -> Result<(),
     }
     let bytes = fs::read(artifact_path)?;
     let program: Program = serde_json::from_slice(&bytes)?;
+    // Serialized AST is an input format, not a proof of validation. Rebuild
+    // flow information and recheck it before executing any artifact.
+    CallGraphValidator::new().build_and_validate(&program)?;
+    TypeChecker::new().check_program(&program)?;
+    TerminationChecker::verify_program(&program)?;
     if verbose {
         println!("  -> Loaded verified program ({} declarations).", program.declarations.len());
     }
@@ -320,6 +325,9 @@ async fn execute_runtime(program: &Program, verbose: bool) -> Result<(), Box<dyn
     });
 
     if let Some(main_routine) = main_routine {
+        if !main_routine.params.is_empty() {
+            return Err("Entry routine 'main' must not declare parameters".into());
+        }
         if verbose {
             println!("\n------------------------------------------------------------");
             println!(" Starting Lia Runtime (Tokio EventLoop & Arenas)");
@@ -343,7 +351,7 @@ async fn execute_runtime(program: &Program, verbose: bool) -> Result<(), Box<dyn
             TopLevelDecl::Routine(r) => Some(r),
             _ => None,
         }) {
-            if !signal_router.register_routine(&routine.name, routine.body.clone()) {
+            if !signal_router.register_routine_with_params(&routine.name, routine.params.clone(), routine.body.clone()) {
                 return Err(format!("Duplicate routine name at runtime: '{}'", routine.name).into());
             }
         }
@@ -369,6 +377,7 @@ async fn execute_runtime(program: &Program, verbose: bool) -> Result<(), Box<dyn
             payload: "Routine main started".to_string(),
             statements: main_routine.body.clone(),
             is_loop: false,
+            bindings: Default::default(),
         }).await?;
         drop(actor_handle);
         tokio::select! {
@@ -380,6 +389,8 @@ async fn execute_runtime(program: &Program, verbose: bool) -> Result<(), Box<dyn
                 event_task.await?;
             }
         }
+        let errors = signal_router.take_errors();
+        if !errors.is_empty() { return Err(errors.join("; ").into()); }
     } else if verbose {
         println!("\nProgram verified successfully! (Library: no `routine main()` entry point)");
     }
@@ -404,6 +415,8 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
         "programs/11_search_and_sort.lia",
         "programs/12_main_entry.lia",
         "programs/13_library_consumer.lia",
+        "programs/14_type_of.lia",
+        "programs/15_higher_order.lia",
         "programs/math.lia",
         "programs/std.lia",
     ];
@@ -489,7 +502,7 @@ fn annotate_complexity(input_path: &str, output_path: &str) -> Result<(), Box<dy
 
     // Compute complexities.
     let mut analyzer = ComplexityAnalyzer::new();
-    let entries = analyzer.analyze(&program);
+    let entries = analyzer.try_analyze(&program)?;
 
     println!("  Declarations analysed: {}", entries.len());
     for e in &entries {

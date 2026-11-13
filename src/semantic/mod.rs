@@ -1,4 +1,6 @@
 pub mod dag;
+pub mod flow;
+pub mod generics;
 pub mod type_checker;
 pub mod termination;
 pub mod complexity;
@@ -8,6 +10,22 @@ use thiserror::Error;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum SemanticError {
+    #[error("Generic type error: {0}")]
+    GenericTypeError(String),
+    #[error("Invalid expression: {0}")]
+    InvalidExpression(String),
+    #[error("Pure functions cannot spawn actors")]
+    SpawnInsideFunction,
+    #[error("Invalid pattern: {0}")]
+    InvalidPattern(String),
+    #[error("Function argument {index} has type {actual:?}; expected {expected:?}")]
+    FunctionArgumentTypeMismatch { index: usize, expected: crate::ast::TypeSpec, actual: crate::ast::TypeSpec },
+    #[error("Expression is not a function: {0:?}")]
+    NotAFunction(crate::ast::TypeSpec),
+    #[error("A value of the declared return type must be returned on every normal path")]
+    MissingFunctionReturn,
+    #[error("Returned or assigned value has type {actual:?}; expected {expected:?}")]
+    FunctionReturnTypeMismatch { expected: crate::ast::TypeSpec, actual: crate::ast::TypeSpec },
     #[error("Call graph cycle detected in function calls: {0}")]
     CallGraphCycle(String),
 

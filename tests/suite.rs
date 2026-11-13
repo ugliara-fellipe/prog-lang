@@ -23,6 +23,407 @@ fn compile_and_validate(source: &str) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[test]
+fn test_function_types_and_named_values_are_supported() {
+    let source = "func apply(f: (Int) -> Int, x: Int) -> Int { f(x) }";
+    let mut parser = Parser::new(source).unwrap();
+    let program = parser.parse_program().unwrap();
+    TypeChecker::new().check_program(&program).unwrap();
+
+    let indirect = "func double(x: Int) -> Int { x * 2 } routine main() { let f = double f(1) }";
+    let program = Parser::new(indirect).unwrap().parse_program().unwrap();
+    assert_eq!(TypeChecker::new().check_program(&program), Ok(()));
+}
+
+#[test]
+fn test_infer_type_of_returned_function_and_its_call() {
+    use lia::ast::{Expr, TypeSpec};
+    let source = "func choose() -> (Int) -> Int { double } func double(x: Int) -> Int { x * 2 }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    let mut checker = TypeChecker::new();
+    assert_eq!(checker.check_program(&program), Ok(()));
+    let target = Expr::FunctionCall { name: "choose".into(), args: vec![] };
+    assert_eq!(checker.infer_type(&target), TypeSpec::Function(vec![TypeSpec::Primitive("Int".into())], Box::new(TypeSpec::Primitive("Int".into()))));
+    assert_eq!(checker.infer_type(&Expr::IndirectCall { target: Box::new(target), args: vec![Expr::IntLiteral(1)] }), TypeSpec::Primitive("Int".into()));
+}
+
+#[test]
+fn test_function_signature_checks_argument_count_types_and_return_type() {
+    use lia::ast::TypeSpec;
+    let int = TypeSpec::Primitive("Int".into());
+    let string = TypeSpec::Primitive("String".into());
+    let callback = TypeSpec::Function(vec![int.clone()], Box::new(string.clone()));
+    let target = TypeSpec::Function(vec![callback.clone()], Box::new(int.clone()));
+    assert_eq!(TypeChecker::check_function_signature(&target, &[callback.clone()]), Ok(int.clone()));
+    assert!(matches!(TypeChecker::check_function_signature(&target, &[]), Err(SemanticError::ArgumentCountMismatch { .. })));
+    let wrong_callback = TypeSpec::Function(vec![string], Box::new(int));
+    assert!(matches!(TypeChecker::check_function_signature(&target, &[wrong_callback]), Err(SemanticError::FunctionArgumentTypeMismatch { index: 1, .. })));
+    let unknown = TypeSpec::Primitive("Unknown".into());
+    assert!(matches!(TypeChecker::check_function_signature(&callback, &[unknown]), Err(SemanticError::FunctionArgumentTypeMismatch { .. })));
+}
+
+#[test]
+fn direct_calls_in_initializers_validate_known_argument_types_and_arity() {
+    for source in [
+        "func identity(x: Int) -> Int { x } func run() { let value = identity(\"wrong\") }",
+        "func identity(x: Int) -> Int { x } func run() { let value = identity() }",
+    ] {
+        let program = Parser::new(source).unwrap().parse_program().unwrap();
+        assert!(matches!(TypeChecker::new().check_program(&program), Err(SemanticError::FunctionArgumentTypeMismatch { .. } | SemanticError::ArgumentCountMismatch { .. })));
+    }
+}
+
+#[test]
+fn test_function_value_calls_check_argument_types() {
+    let source = "func apply(f: (Int) -> Int) -> Int { f(\"wrong\") }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert!(matches!(TypeChecker::new().check_program(&program), Err(SemanticError::FunctionArgumentTypeMismatch { index: 1, .. })));
+    let source = "func choose() -> (Int) -> Int { wrong } func wrong(x: String) -> Int { 1 }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert!(matches!(TypeChecker::new().check_program(&program), Err(SemanticError::FunctionReturnTypeMismatch { .. })));
+}
+
+#[test]
+fn function_value_arguments_infer_expression_types_and_reject_non_callable() {
+    let valid = "func apply(f: (Int) -> Int) -> Int { f(1 + 2) }";
+    let program = Parser::new(valid).unwrap().parse_program().unwrap();
+    assert_eq!(TypeChecker::new().check_program(&program), Ok(()));
+    let invalid = "func run() { let x = 1 x(2) }";
+    let program = Parser::new(invalid).unwrap().parse_program().unwrap();
+    assert!(matches!(TypeChecker::new().check_program(&program), Err(SemanticError::NotAFunction(_))));
+}
+
+#[test]
+fn checker_does_not_leak_symbols_between_declarations_or_runs() {
+    let first = Parser::new("func one(f: Int) { 1 }").unwrap().parse_program().unwrap();
+    let second = Parser::new("func f() -> Int { 1 } func two() -> Int { f() }").unwrap().parse_program().unwrap();
+    let mut checker = TypeChecker::new();
+    checker.check_program(&first).unwrap();
+    checker.check_program(&second).unwrap();
+    let combined = Parser::new("func one(f: Int) { 1 } func f() -> Int { 1 } func two() -> Int { f() }").unwrap().parse_program().unwrap();
+    checker.check_program(&combined).unwrap();
+}
+
+#[test]
+fn runtime_matches_nested_list_patterns() {
+    use lia::ast::TopLevelDecl;
+    use lia::runtime::actor::{RuntimeValue, SignalRouter};
+    let source = "func only_one(xs: List[Int]) -> Int { match xs { Cons(x, Nil) => x, _ => 0 } }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    let router = SignalRouter::default();
+    for declaration in program.declarations {
+        if let TopLevelDecl::Func(function) = declaration { router.register_function(function); }
+    }
+    assert_eq!(router.evaluate_function("only_one", vec![RuntimeValue::List(vec![RuntimeValue::Int(7)])]), Some(RuntimeValue::Int(7)));
+    assert_eq!(router.evaluate_function("only_one", vec![RuntimeValue::List(vec![RuntimeValue::Int(7), RuntimeValue::Int(8)])]), Some(RuntimeValue::Int(0)));
+}
+
+#[test]
+fn runtime_evaluates_comparisons_and_reports_integer_overflow() {
+    use lia::ast::Expr;
+    use lia::runtime::actor::{RuntimeValue, SignalRouter};
+    let router = SignalRouter::default();
+    let binary = |op: &str, a, b| Expr::BinaryOp { op: op.into(), left: Box::new(Expr::IntLiteral(a)), right: Box::new(Expr::IntLiteral(b)) };
+    assert_eq!(router.evaluate_expression(&binary("<", 1, 2)), Some(RuntimeValue::Bool(true)));
+    assert_eq!(router.evaluate_expression(&binary("==", 1, 2)), Some(RuntimeValue::Bool(false)));
+    assert_eq!(router.evaluate_expression(&binary("+", i64::MAX, 1)), None);
+    assert_eq!(router.evaluate_expression(&binary("/", i64::MIN, -1)), None);
+}
+
+#[test]
+fn runtime_catches_explicit_throw_but_not_evaluation_failure() {
+    use lia::ast::TopLevelDecl;
+    use lia::runtime::actor::{RuntimeValue, SignalRouter};
+    let source = "func raise() -> Int { throw 9 } func nested() -> Int { try { 1 + raise() } catch error { error } } func caught() -> Int { try { throw 7 } catch error { error } } func invalid() -> Int { try { 1 / 0 } catch error { 7 } }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    let router = SignalRouter::default();
+    for decl in program.declarations { if let TopLevelDecl::Func(f) = decl { router.register_function(f); } }
+    assert_eq!(router.evaluate_function("caught", vec![]), Some(RuntimeValue::Int(7)));
+    assert_eq!(router.evaluate_function("nested", vec![]), Some(RuntimeValue::Int(9)));
+    assert_eq!(router.evaluate_function("invalid", vec![]), None);
+}
+
+#[test]
+fn routine_executes_each_loop_item_and_selects_matching_case() {
+    let dir = std::env::temp_dir().join(format!("lia-routine-blocks-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy("programs/std.lia", dir.join("std.lia")).unwrap();
+    let source = r#"import std
+        routine main() {
+            for x in [1, 2] { std.log(x) }
+            match True { False => std.log("wrong"), True => std.log("right") }
+        }
+    "#;
+    let file = dir.join("main.lia");
+    std::fs::write(&file, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_lia")).arg("run").arg(&file).output().unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["1", "2", "right"]);
+}
+
+#[test]
+fn test_higher_order_global_call_and_branch_return_types_are_checked() {
+    let source = r#"
+        func wrong(x: String) -> Int { 1 }
+        func apply(f: (Int) -> Int) -> Int { f(1) }
+        func caller() -> Int { apply(wrong) }
+    "#;
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    // Check the caller separately so the provisional higher-order rejection
+    // of `apply` does not prevent checking its callers.
+    let mut declarations = program.declarations.clone();
+    declarations.rotate_left(2);
+    let reordered = lia::ast::Program { imports: vec![], declarations };
+    assert!(matches!(TypeChecker::new().check_program(&reordered), Err(SemanticError::FunctionArgumentTypeMismatch { index: 1, .. })));
+
+    let source = r#"
+        func good(x: Int) -> Int { x }
+        func wrong(x: String) -> Int { 1 }
+        func choose(flag: Int) -> (Int) -> Int { match flag { 0 => good, _ => wrong } }
+    "#;
+    // Lia patterns use identifiers rather than integer literals.
+    let source = source.replace("0 => good", "Zero => good");
+    let program = Parser::new(&source).unwrap().parse_program().unwrap();
+    assert!(matches!(TypeChecker::new().check_program(&program), Err(SemanticError::FunctionReturnTypeMismatch { .. })));
+
+    let source = r#"
+        func good(x: Int) -> Int { x }
+        func choose(flag: Int) -> (Int) -> Int { match flag { Zero => good, _ => good } }
+    "#;
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert_eq!(TypeChecker::new().check_program(&program), Ok(()));
+
+    let source = "func choose() -> (Int) -> Int { let x = 1 }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert_eq!(TypeChecker::new().check_program(&program), Err(SemanticError::MissingFunctionReturn));
+}
+
+#[test]
+fn function_return_pattern_binding_uses_the_matched_type() {
+    let source = "func choose(f: (Int) -> Int) -> (Int) -> Int { match f { selected => selected } }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert_eq!(TypeChecker::new().check_program(&program), Ok(()));
+}
+
+#[test]
+fn function_return_destructures_list_element_types() {
+    let source = "func identity(x: Int) -> Int { x } func choose(fs: List[(Int) -> Int]) -> (Int) -> Int { match fs { Cons(f, tail) => f, _ => identity } }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert_eq!(TypeChecker::new().check_program(&program), Ok(()));
+}
+
+#[test]
+fn function_values_inside_returned_lists_are_checked() {
+    let source = "func choose() -> List[(Int) -> Int] { [wrong] } func wrong(x: String) -> Int { 1 }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert!(matches!(TypeChecker::new().check_program(&program), Err(SemanticError::FunctionReturnTypeMismatch { .. })));
+    let source = "func choose() -> List[(Int) -> Int] { let x = 1 }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert_eq!(TypeChecker::new().check_program(&program), Err(SemanticError::MissingFunctionReturn));
+}
+
+#[test]
+fn function_return_branch_locals_do_not_leak() {
+    let source = r#"
+        func good(x: Int) -> Int { x }
+        func choose(flag: Bool) -> (Int) -> Int {
+            match flag { True => { let f = good f }, _ => f }
+        }
+    "#;
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert_eq!(TypeChecker::new().check_program(&program), Err(SemanticError::UndeclaredSymbol("f".into())));
+}
+
+#[test]
+fn calls_inside_list_literals_participate_in_cycle_detection() {
+    let source = "func first() { [second()] } func second() { first() }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert!(matches!(CallGraphValidator::new().build_and_validate(&program), Err(SemanticError::CallGraphCycle(_))));
+}
+
+#[test]
+fn graph_rejects_cycles_through_local_function_values() {
+    for source in [
+        "func recurse(x: Int) -> Int { let f = recurse f(x) }",
+        "func choose() -> (Int) -> Int { recurse } func recurse(x: Int) -> Int { let f = choose() f(x) }",
+        "func apply(f: (Int) -> Int, x: Int) -> Int { f(x) } func recurse(x: Int) -> Int { apply(recurse, x) }",
+        "func recurse(x: Int) -> Int { match recurse { callback => callback(x) } }",
+        "func apply(fs: List[(Int) -> Int], x: Int) -> Int { for f in fs { f(x) } x } func recurse(x: Int) -> Int { apply([recurse], x) }",
+    ] {
+        let program = Parser::new(source).unwrap().parse_program().unwrap();
+        assert!(matches!(CallGraphValidator::new().build_and_validate(&program), Err(SemanticError::CallGraphCycle(_))), "{source}");
+    }
+}
+
+#[test]
+fn graph_does_not_call_unused_function_parameters() {
+    let source = "func choose(f: (Int) -> Int, x: Int) -> Int { x } func recurse(x: Int) -> Int { choose(recurse, x) }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert!(CallGraphValidator::new().build_and_validate(&program).is_ok());
+}
+
+#[test]
+fn termination_checks_calls_in_match_targets_and_lists() {
+    for source in ["func f(x: Int) { match f(x) { _ => 1 } }", "func f(x: Int) { [f(x)] }", "func f() { f() }"] {
+        let program = Parser::new(source).unwrap().parse_program().unwrap();
+        assert!(matches!(TerminationChecker::verify_program(&program), Err(SemanticError::NonDecreasingRecursion(_))));
+    }
+}
+
+#[test]
+fn matching_a_whole_value_does_not_prove_recursive_descent() {
+    let source = "func f(xs: List[Int]) -> Int { match xs { same => f(same) } }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert!(matches!(TerminationChecker::verify_program(&program), Err(SemanticError::NonDecreasingRecursion(_))));
+}
+
+#[test]
+fn package_resolution_rejects_circular_imports() {
+    let dir = std::env::temp_dir().join(format!("lia-cycle-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.lia"), "import b").unwrap();
+    std::fs::write(dir.join("b.lia"), "import a").unwrap();
+    let program = Parser::new("import a").unwrap().parse_program().unwrap();
+    let result = lia::semantic::packages::PackageManager::new(&dir).resolve_program(program);
+    std::fs::remove_dir_all(dir).unwrap();
+    assert!(matches!(result, Err(SemanticError::PackageError(message)) if message.contains("Circular")));
+}
+
+#[test]
+fn complexity_includes_later_callees_in_nested_expressions() {
+    use lia::semantic::complexity::{Complexity, ComplexityAnalyzer};
+    let source = "func caller(xs: List[Int]) { [helper(xs)] } func helper(xs: List[Int]) { for x in xs { x } }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    let entries = ComplexityAnalyzer::new().analyze(&program);
+    assert_eq!(entries.iter().find(|entry| entry.name == "caller").unwrap().complexity, Complexity::Polynomial(1));
+}
+
+#[test]
+fn test_indirect_calls_cannot_hide_loop_only_expressions() {
+    let code = "func maker() { 1 } routine main() { maker()(message.value) }";
+    let program = Parser::new(code).unwrap().parse_program().unwrap();
+    assert_eq!(TypeChecker::new().check_program(&program), Err(SemanticError::ReceiveOutsideLoop));
+    let code = "func maker() { 1 } routine main() { maker()(memory key) }";
+    let program = Parser::new(code).unwrap().parse_program().unwrap();
+    assert_eq!(TypeChecker::new().check_program(&program), Err(SemanticError::MemoryOutsideLoop));
+}
+
+#[test]
+fn test_runtime_can_copy_and_invoke_named_function_values() {
+    use lia::ast::TopLevelDecl;
+    use lia::runtime::actor::{RuntimeValue, SignalRouter};
+
+    let source = r#"
+        func double(x: Int) -> Int { x * 2 }
+        func apply(f: (Int) -> Int, x: Int) -> Int { f(x) }
+        func choose() -> (Int) -> Int { double }
+        func invoke() -> Int { choose()(6) }
+    "#;
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    let router = SignalRouter::default();
+    for declaration in program.declarations {
+        if let TopLevelDecl::Func(function) = declaration {
+            router.register_function(function);
+        }
+    }
+    let function = router.evaluate_function("choose", vec![]).unwrap();
+    assert_eq!(function, RuntimeValue::Function("double".into()));
+    assert_eq!(router.evaluate_function("apply", vec![function.clone(), RuntimeValue::Int(5)]), Some(RuntimeValue::Int(10)));
+    assert_eq!(router.evaluate_function("apply", vec![function, RuntimeValue::Int(7)]), Some(RuntimeValue::Int(14)));
+    assert_eq!(router.evaluate_function("apply", vec![RuntimeValue::Int(1), RuntimeValue::Int(5)]), None);
+    assert_eq!(router.evaluate_function("invoke", vec![]), Some(RuntimeValue::Int(12)));
+}
+
+#[test]
+fn test_spawned_routine_receives_copied_function_value() {
+    use lia::ast::{Param, TypeSpec};
+    use lia::runtime::actor::{RuntimeValue, SignalRouter};
+
+    let router = SignalRouter::default();
+    assert!(router.register_routine_with_params("Worker", vec![Param {
+        name: "action".into(),
+        param_type: TypeSpec::Function(vec![TypeSpec::Primitive("Int".into())], Box::new(TypeSpec::Primitive("Int".into()))),
+    }], vec![]));
+    let value = RuntimeValue::Function("double".into());
+    let message = router.spawn_routine_with_args("Worker", String::new(), vec![value.clone()]).unwrap();
+    assert_eq!(message.bindings.get("action"), Some(&value));
+}
+
+#[test]
+fn spawn_checks_routine_arity_and_known_argument_types() {
+    for source in [
+        "routine worker(x: Int) {} routine main() { spawn worker() }",
+        "routine worker(x: Int) {} routine main() { spawn worker(1, 2) }",
+    ] {
+        let program = Parser::new(source).unwrap().parse_program().unwrap();
+        assert!(matches!(TypeChecker::new().check_program(&program), Err(SemanticError::ArgumentCountMismatch { .. })));
+    }
+    let source = "routine worker(x: Int) {} routine main() { spawn worker(\"wrong\") }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert!(matches!(TypeChecker::new().check_program(&program), Err(SemanticError::FunctionArgumentTypeMismatch { .. })));
+    let source = "routine main() { spawn worker(wrong) } routine worker(f: (Int) -> Int) {} func wrong(x: String) -> Int { 1 }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert!(matches!(TypeChecker::new().check_program(&program), Err(SemanticError::FunctionArgumentTypeMismatch { .. })));
+}
+
+#[test]
+fn runtime_rejects_routine_arguments_with_wrong_arity() {
+    use lia::ast::{Param, TypeSpec};
+    use lia::runtime::actor::{RuntimeValue, SignalRouter};
+    let router = SignalRouter::default();
+    router.register_routine_with_params("worker", vec![Param { name: "x".into(), param_type: TypeSpec::Primitive("Int".into()) }], vec![]);
+    assert!(router.spawn_routine_with_args("worker", String::new(), vec![]).is_none());
+    assert!(router.spawn_routine_with_args("worker", String::new(), vec![RuntimeValue::Int(1), RuntimeValue::Int(2)]).is_none());
+    assert!(router.spawn_routine_with_args("worker", String::new(), vec![RuntimeValue::Int(1)]).is_some());
+}
+
+#[test]
+fn test_call_graph_conservatively_detects_cycles_through_function_parameters() {
+    let cyclic = r#"
+        func apply(f: (Int) -> Int, x: Int) -> Int { f(x) }
+        func bad(x: Int) -> Int { apply(bad, x) }
+    "#;
+    let program = Parser::new(cyclic).unwrap().parse_program().unwrap();
+    assert!(matches!(CallGraphValidator::new().build_and_validate(&program), Err(SemanticError::CallGraphCycle(_))));
+
+    let valid = r#"
+        func apply(f: (Int) -> Int, x: Int) -> Int { f(x) }
+        func double(x: Int) -> Int { x * 2 }
+    "#;
+    let program = Parser::new(valid).unwrap().parse_program().unwrap();
+    assert!(CallGraphValidator::new().build_and_validate(&program).is_ok());
+
+    let returned = r#"
+        func choose() -> (Int) -> Int { bad }
+        func bad(x: Int) -> Int { choose()(x) }
+    "#;
+    let program = Parser::new(returned).unwrap().parse_program().unwrap();
+    assert!(matches!(CallGraphValidator::new().build_and_validate(&program), Err(SemanticError::CallGraphCycle(_))));
+
+    let safe_returned = r#"
+        func double(x: Int) -> Int { x * 2 }
+        func choose() -> (Int) -> Int { double }
+        func invoke() -> Int { choose()(5) }
+    "#;
+    let program = Parser::new(safe_returned).unwrap().parse_program().unwrap();
+    assert!(CallGraphValidator::new().build_and_validate(&program).is_ok());
+}
+
+#[test]
+fn test_termination_checks_calls_nested_in_indirect_call_targets_and_arguments() {
+    let source = "func recur(x: Int) -> Int { recur(x)(1) }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert!(matches!(TerminationChecker::verify_program(&program), Err(SemanticError::NonDecreasingRecursion(_))));
+    let source = "func recur(x: Int) -> Int { factory()(recur(x)) }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert!(matches!(TerminationChecker::verify_program(&program), Err(SemanticError::NonDecreasingRecursion(_))));
+    let source = "func a() -> Int { chooser()(b()) } func b() -> Int { a() }";
+    let program = Parser::new(source).unwrap().parse_program().unwrap();
+    assert!(matches!(CallGraphValidator::new().build_and_validate(&program), Err(SemanticError::UndeclaredSymbol(_))));
+}
+
+#[test]
 fn test_program_00_hello_world() {
     let code = include_str!("../programs/00_hello_world.lia");
     assert!(compile_and_validate(code).is_ok());
@@ -556,6 +957,7 @@ routine TaskExecutor(task: Task) {
 fn test_loop_parses_validates_and_has_per_iteration_complexity() {
     let code = r#"
 loop Poller() {
+    let queue = [1, 2]
     for item in queue {
         log(item)
     }
@@ -590,7 +992,7 @@ loop Bad() {
 }
 "#;
     let err = compile_and_validate(non_terminating_iteration).unwrap_err();
-    assert!(matches!(err.downcast_ref::<SemanticError>(), Some(SemanticError::NonDecreasingRecursion(_))));
+    assert!(matches!(err.downcast_ref::<SemanticError>(), Some(SemanticError::InvalidExpression(message)) if message.contains("spawn")));
 }
 
 #[test]

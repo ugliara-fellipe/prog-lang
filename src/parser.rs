@@ -74,6 +74,7 @@ pub struct Token {
     pub col: usize,
 }
 
+#[derive(Clone)]
 pub struct Lexer<'a> {
     _src: &'a str,
     chars: Vec<char>,
@@ -374,6 +375,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     current: Token,
@@ -512,6 +514,7 @@ impl<'a> Parser<'a> {
     fn parse_type_decl(&mut self) -> Result<TypeDecl, ParseError> {
         self.expect(TokenKind::Type)?;
         let name = self.expect_id()?;
+        let type_params = self.parse_type_params()?;
         self.expect(TokenKind::LBrace)?;
 
         let mut fields = Vec::new();
@@ -531,12 +534,13 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(TokenKind::RBrace)?;
-        Ok(TypeDecl { name, fields })
+        Ok(TypeDecl { name, type_params, fields })
     }
 
     fn parse_func_decl(&mut self) -> Result<FuncDecl, ParseError> {
         self.expect(TokenKind::Func)?;
         let name = self.expect_id()?;
+        let type_params = self.parse_type_params()?;
         self.expect(TokenKind::LParen)?;
 
         let mut params = Vec::new();
@@ -544,14 +548,6 @@ impl<'a> Parser<'a> {
             let param_name = self.expect_id()?;
             self.expect(TokenKind::Colon)?;
             let param_type = self.parse_type_spec()?;
-            // Disallow Ref<T> in routine parameters (must be copyable)
-            if let TypeSpec::Ref(_) = param_type {
-                return Err(ParseError::SyntaxError {
-                    line: self.current.line,
-                    col: self.current.col,
-                    message: "Ref types are not allowed in routine parameters".to_string(),
-                });
-            }
             params.push(Param {
                 name: param_name,
                 param_type,
@@ -575,6 +571,7 @@ impl<'a> Parser<'a> {
         let body = self.parse_block()?;
         Ok(FuncDecl {
             name,
+            type_params,
             params,
             return_type,
             body,
@@ -584,6 +581,7 @@ impl<'a> Parser<'a> {
     fn parse_routine_decl(&mut self) -> Result<RoutineDecl, ParseError> {
         self.expect(TokenKind::Routine)?;
         let name = self.expect_id()?;
+        let type_params = self.parse_type_params()?;
         self.expect(TokenKind::LParen)?;
 
         let mut params = Vec::new();
@@ -613,7 +611,24 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::RParen)?;
 
         let body = self.parse_block()?;
-        Ok(RoutineDecl { name, params, body })
+        Ok(RoutineDecl { name, type_params, params, body })
+    }
+
+    fn parse_type_params(&mut self) -> Result<Vec<String>, ParseError> {
+        if !self.check(&TokenKind::Lt) { return Ok(Vec::new()); }
+        self.advance()?;
+        let mut params = Vec::new();
+        loop {
+            let name = self.expect_id()?;
+            if params.contains(&name) {
+                return Err(ParseError::SyntaxError { line: self.current.line, col: self.current.col, message: format!("Duplicate type parameter '{}'", name) });
+            }
+            params.push(name);
+            if !self.check(&TokenKind::Comma) { break; }
+            self.advance()?;
+        }
+        self.expect(TokenKind::Gt)?;
+        Ok(params)
     }
 
     fn parse_loop_decl(&mut self) -> Result<LoopDecl, ParseError> {
@@ -633,6 +648,18 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_spec(&mut self) -> Result<TypeSpec, ParseError> {
+        if self.check(&TokenKind::LParen) {
+            self.advance()?;
+            let mut params = Vec::new();
+            while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
+                params.push(self.parse_type_spec()?);
+                if !self.check(&TokenKind::Comma) { break; }
+                self.advance()?;
+            }
+            self.expect(TokenKind::RParen)?;
+            self.expect(TokenKind::Arrow)?;
+            return Ok(TypeSpec::Function(params, Box::new(self.parse_type_spec()?)));
+        }
         let mut name = self.expect_id()?;
         if self.check(&TokenKind::Dot) {
             self.advance()?;
@@ -925,6 +952,21 @@ impl<'a> Parser<'a> {
     fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_primary()?;
         loop {
+            // A tight '<' after a named expression introduces explicit type
+            // arguments only if a complete type list can be read. Spaces
+            // before '<' retain the ordinary relational interpretation.
+            if self.check(&TokenKind::Lt)
+                && matches!(expr, Expr::Variable(_) | Expr::MemberAccess { .. })
+                && self.lexer.pos >= 2
+                && !self.lexer.chars[self.lexer.pos - 2].is_whitespace()
+            {
+                let mut trial = self.clone();
+                if let Ok(type_args) = trial.parse_explicit_type_args() {
+                    *self = trial;
+                    expr = Expr::Specialize { target: Box::new(expr), type_args };
+                    continue;
+                }
+            }
             if self.check(&TokenKind::LParen) {
                 // Function call
                 self.advance()?;
@@ -957,13 +999,7 @@ impl<'a> Parser<'a> {
                             });
                         }
                     }
-                    _ => {
-                        return Err(ParseError::SyntaxError {
-                            line: self.current.line,
-                            col: self.current.col,
-                            message: "Dynamic function calls are not supported".to_string(),
-                        });
-                    }
+                    target => expr = Expr::IndirectCall { target: Box::new(target), args },
                 }
             } else if self.check(&TokenKind::Dot) {
                 // Member access
@@ -978,6 +1014,17 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(expr)
+    }
+
+    fn parse_explicit_type_args(&mut self) -> Result<Vec<TypeSpec>, ParseError> {
+        self.expect(TokenKind::Lt)?;
+        let mut args = vec![self.parse_type_spec()?];
+        while self.check(&TokenKind::Comma) {
+            self.advance()?;
+            args.push(self.parse_type_spec()?);
+        }
+        self.expect(TokenKind::Gt)?;
+        Ok(args)
     }
 
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {

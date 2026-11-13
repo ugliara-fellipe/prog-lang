@@ -24,9 +24,9 @@ func calculate_area(r: Rectangle) -> Int {
     area
 }
 
-func is_square(r: Rectangle) -> Int {
-    let mut square_flag: Int = 0
-    let equal: Int = r.width == r.height
+func is_square(r: Rectangle) -> Bool {
+    let mut square_flag: Bool = False
+    let equal: Bool = r.width == r.height
     equal
 }
 

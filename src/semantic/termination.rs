@@ -20,17 +20,44 @@ impl TerminationChecker {
                 _ => {}
             }
         }
+        // An indirect invocation must satisfy the same global termination
+        // obligations even when this entry point is used without the driver.
+        crate::semantic::dag::CallGraphValidator::new().build_and_validate(program)?;
         Ok(())
     }
 
     fn verify_func_termination(func: &FuncDecl) -> Result<(), SemanticError> {
         let func_name = &func.name;
-        let sub_components = HashSet::new();
+        let mut sub_components = HashSet::new();
+        if let Some(param) = func.params.first() { sub_components.insert(format!("\0{}",param.name)); }
+        Self::check_body_termination(&func.body,func_name,&sub_components)
+    }
 
-        for stmt in &func.body {
-            Self::check_stmt_termination(stmt, func_name, &sub_components)?;
+    fn check_body_termination(body: &[Statement], func_name: &str, sub_components: &HashSet<String>) -> Result<(), SemanticError> {
+        let mut local = sub_components.clone();
+        for stmt in body {
+            Self::check_stmt_termination(stmt,func_name,&local)?;
+            if let Statement::VarDecl {name,value,..}=stmt {
+                let origin=Self::structural_origin(value,&local);
+                let strict=origin == 2;
+                let root=origin == 1;
+                local.remove(name);
+                local.remove(&format!("\0{}",name));
+                if strict { local.insert(name.clone()); }
+                if root { local.insert(format!("\0{}",name)); }
+            }
         }
         Ok(())
+    }
+
+    // 0: unrelated value, 1: the inductive input, 2: a strict descendant.
+    fn structural_origin(expr: &Expr, components: &HashSet<String>) -> u8 {
+        match expr {
+            Expr::Variable(name) if components.contains(name) => 2,
+            Expr::Variable(name) if components.contains(&format!("\0{}",name)) => 1,
+            Expr::MemberAccess {target,..} if Self::structural_origin(target,components) > 0 => 2,
+            _ => 0,
+        }
     }
 
     /// Verify that a routine body terminates just like a function body.
@@ -72,13 +99,16 @@ impl TerminationChecker {
     ) -> Result<(), SemanticError> {
         match stmt {
             Statement::MemorySet { value, .. } => Self::check_expr_termination(value, func_name, sub_components)?,
-            Statement::Match { cases, .. } => {
+            Statement::Match { target, cases } => {
+                Self::check_expr_termination(target, func_name, sub_components)?;
                 for case in cases {
                     let mut local_subs = sub_components.clone();
-                    Self::extract_pattern_bindings(&case.pattern, &mut local_subs);
-                    for s in &case.body {
-                        Self::check_stmt_termination(s, func_name, &local_subs)?;
-                    }
+                    // Only fields extracted from the inductive input (or
+                    // one of its descendants) prove a decreasing call.
+                    let related=Self::structural_origin(target,sub_components) > 0;
+                    Self::remove_pattern_bindings(&case.pattern,&mut local_subs);
+                    if related { Self::extract_pattern_bindings(&case.pattern, &mut local_subs); }
+                    Self::check_body_termination(&case.body,func_name,&local_subs)?;
                 }
             }
             Statement::ExprStmt(expr) | Statement::Spawn(expr) => {
@@ -90,10 +120,12 @@ impl TerminationChecker {
             Statement::Throw(expr) => {
                 Self::check_expr_termination(expr, func_name, sub_components)?;
             }
-            Statement::TryCatch { try_body, catch_body, .. } => {
-                for statement in try_body.iter().chain(catch_body) {
-                    Self::check_stmt_termination(statement, func_name, sub_components)?;
-                }
+            Statement::TryCatch { try_body, error_name, catch_body } => {
+                Self::check_body_termination(try_body,func_name,sub_components)?;
+                let mut catch_subs=sub_components.clone();
+                catch_subs.remove(error_name);
+                catch_subs.remove(&format!("\0{}",error_name));
+                Self::check_body_termination(catch_body,func_name,&catch_subs)?;
             }
             Statement::VarDecl { value, .. } => {
                 Self::check_expr_termination(value, func_name, sub_components)?;
@@ -101,16 +133,14 @@ impl TerminationChecker {
             Statement::ForLoop { var_name, collection, body } => {
                 Self::check_expr_termination(collection, func_name, sub_components)?;
                 let mut loop_subs = sub_components.clone();
+                loop_subs.remove(var_name);
+                loop_subs.remove(&format!("\0{}",var_name));
                 // If iterating over a subcomponent (e.g. `tail`), elements drawn from it (`sub`)
                 // are also structurally smaller subcomponents.
-                if let Expr::Variable(coll_name) = collection {
-                    if sub_components.contains(coll_name) {
-                        loop_subs.insert(var_name.clone());
-                    }
+                if Self::structural_origin(collection,sub_components) > 0 {
+                    loop_subs.insert(var_name.clone());
                 }
-                for s in body {
-                    Self::check_stmt_termination(s, func_name, &loop_subs)?;
-                }
+                Self::check_body_termination(body,func_name,&loop_subs)?;
             }
             Statement::Terminate => {}
         }
@@ -133,7 +163,8 @@ impl TerminationChecker {
     ) -> Result<(), SemanticError> {
         match stmt {
             Statement::MemorySet { value, .. } => Self::check_expr_termination(value, routine_name, sub_components)?,
-            Statement::Match { cases, .. } => {
+            Statement::Match { target, cases } => {
+                Self::check_routine_expr_termination(target, routine_name, sub_components)?;
                 for case in cases {
                     let mut local_subs = sub_components.clone();
                     Self::extract_pattern_bindings(&case.pattern, &mut local_subs);
@@ -194,6 +225,15 @@ impl TerminationChecker {
         sub_components: &HashSet<String>,
     ) -> Result<(), SemanticError> {
         match expr {
+            Expr::IndirectCall { target, args } => {
+                if let Expr::Specialize { target: named, .. } = target.as_ref() {
+                    if let Expr::Variable(name) = named.as_ref() {
+                        return Self::check_routine_expr_termination(&Expr::FunctionCall { name: name.clone(), args: args.clone() }, routine_name, sub_components);
+                    }
+                }
+                Self::check_routine_expr_termination(target, routine_name, sub_components)?;
+                for arg in args { Self::check_routine_expr_termination(arg, routine_name, sub_components)?; }
+            }
             Expr::FunctionCall { name, args } => {
                 // A routine calling itself synchronously (not via spawn) is
                 // an error – routines are not functions, but if the name
@@ -216,8 +256,11 @@ impl TerminationChecker {
             Expr::RefCreate(inner) => {
                 Self::check_routine_expr_termination(inner, routine_name, sub_components)?;
             }
-            Expr::MemberAccess { target, .. } => {
+            Expr::MemberAccess { target, .. } | Expr::Specialize { target, .. } => {
                 Self::check_routine_expr_termination(target, routine_name, sub_components)?;
+            }
+            Expr::ListLiteral(items) => {
+                for item in items { Self::check_routine_expr_termination(item, routine_name, sub_components)?; }
             }
             _ => {}
         }
@@ -233,7 +276,7 @@ impl TerminationChecker {
         routine_name: &str,
         sub_components: &HashSet<String>,
     ) -> Result<(), SemanticError> {
-        if let Expr::FunctionCall { args, .. } = expr {
+        if let Expr::FunctionCall { args, .. } | Expr::IndirectCall { args, .. } = expr {
             // Skip the top-level name (that's the spawned routine).
             // Only recurse into the argument expressions.
             for arg in args {
@@ -257,9 +300,18 @@ impl TerminationChecker {
                     Self::extract_pattern_bindings(pat, sub_components);
                 }
             }
-            Pattern::Identifier(name) => {
-                sub_components.insert(name.clone());
-            }
+            // A bare binding aliases the entire matched value; it is not a
+            // strictly smaller component. Constructor fields are added by
+            // the parent arm above.
+            Pattern::Identifier(_) => {}
+            _ => {}
+        }
+    }
+
+    fn remove_pattern_bindings(pattern: &Pattern, sub_components: &mut HashSet<String>) {
+        match pattern {
+            Pattern::Identifier(name) => { sub_components.remove(name); sub_components.remove(&format!("\0{}",name)); }
+            Pattern::Constructor(_,parts) => for part in parts { Self::remove_pattern_bindings(part,sub_components); },
             _ => {}
         }
     }
@@ -274,8 +326,20 @@ impl TerminationChecker {
         sub_components: &HashSet<String>,
     ) -> Result<(), SemanticError> {
         match expr {
+            Expr::IndirectCall { target, args } => {
+                if let Expr::Specialize { target: named, .. } = target.as_ref() {
+                    if let Expr::Variable(name) = named.as_ref() {
+                        return Self::check_expr_termination(&Expr::FunctionCall { name: name.clone(), args: args.clone() }, func_name, sub_components);
+                    }
+                }
+                Self::check_expr_termination(target, func_name, sub_components)?;
+                for arg in args { Self::check_expr_termination(arg, func_name, sub_components)?; }
+            }
             Expr::FunctionCall { name, args } => {
                 if name == func_name {
+                    if args.is_empty() {
+                        return Err(SemanticError::NonDecreasingRecursion(format!("Recursive function '{}' has no decreasing argument", func_name)));
+                    }
                     // If direct recursive call, verify that argument is a subcomponent extracted by match
                     // The first argument is the inductive input that proves
                     // recursive descent. Remaining arguments (for example a
@@ -313,8 +377,11 @@ impl TerminationChecker {
             Expr::RefCreate(inner) => {
                 Self::check_expr_termination(inner, func_name, sub_components)?;
             }
-            Expr::MemberAccess { target, .. } => {
+            Expr::MemberAccess { target, .. } | Expr::Specialize { target, .. } => {
                 Self::check_expr_termination(target, func_name, sub_components)?;
+            }
+            Expr::ListLiteral(items) => {
+                for item in items { Self::check_expr_termination(item, func_name, sub_components)?; }
             }
             _ => {}
         }

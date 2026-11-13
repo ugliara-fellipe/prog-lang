@@ -1,0 +1,253 @@
+//! Finite, monotone analysis of named function values. Results refer to nodes
+//! in the supplied Program, so consumers must query the same AST.
+use std::collections::{HashMap, HashSet};
+use crate::ast::*;
+use crate::semantic::SemanticError;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Value {
+    targets: HashSet<String>,
+    // Container contents are deliberately merged. This loses positional
+    // precision but never omits a function stored in a nested list.
+    contents: HashSet<String>,
+    unknown: bool,
+    contents_unknown: bool,
+}
+impl Value {
+    fn named(name: &str) -> Self { Self { targets: [name.to_owned()].into(), ..Self::default() } }
+    fn unknown() -> Self { Self { unknown: true, ..Self::default() } }
+    fn merge(&mut self, other: &Self) -> bool {
+        let before = self.clone();
+        self.targets.extend(other.targets.iter().cloned());
+        self.contents.extend(other.contents.iter().cloned());
+        self.unknown |= other.unknown;
+        self.contents_unknown |= other.contents_unknown;
+        *self != before
+    }
+    fn element(&self) -> Self {
+        Self { targets: self.contents.clone(), contents: self.contents.clone(), unknown: self.contents_unknown || self.unknown, contents_unknown: self.contents_unknown || self.unknown }
+    }
+}
+
+#[derive(Default)]
+pub struct FunctionFlow {
+    targets: HashMap<usize, HashSet<String>>,
+    indirect: HashSet<usize>,
+    calls: HashMap<String, HashSet<String>>,
+    indirect_calls: HashMap<String, HashSet<String>>,
+}
+impl FunctionFlow {
+    pub fn analyze(program: &Program) -> Result<Self, SemanticError> {
+        let mut solver = Solver::new(program);
+        solver.solve();
+        // A declaration with no incoming function values is an open entry
+        // point. Conservatively admit every named value matching its type.
+        // Actual call sites otherwise supply the more precise finite sets.
+        solver.seed_open_parameters();
+        solver.solve();
+        if let Some(reason) = solver.unresolved.iter().min() {
+            return Err(SemanticError::UndeclaredSymbol(format!("cannot safely resolve indirect call: {}", reason)));
+        }
+        Ok(solver.flow)
+    }
+    pub fn targets_for(&self, expr: &Expr) -> HashSet<String> { self.targets.get(&(expr as *const Expr as usize)).cloned().unwrap_or_default() }
+    pub fn is_indirect(&self, expr: &Expr) -> bool { self.indirect.contains(&(expr as *const Expr as usize)) }
+    pub fn calls_by_owner(&self) -> &HashMap<String, HashSet<String>> { &self.calls }
+    pub fn indirect_calls_by_owner(&self) -> &HashMap<String, HashSet<String>> { &self.indirect_calls }
+}
+
+struct Solver<'a> {
+    program: &'a Program,
+    functions: HashMap<String, &'a FuncDecl>,
+    params: HashMap<String, Vec<Value>>,
+    returns: HashMap<String, Value>,
+    raised: HashMap<String, Value>,
+    flow: FunctionFlow,
+    changed: bool,
+    unresolved: HashSet<String>,
+}
+impl<'a> Solver<'a> {
+    fn new(program: &'a Program) -> Self {
+        let mut params = HashMap::new();
+        let mut functions = HashMap::new();
+        for decl in &program.declarations {
+            match decl {
+                TopLevelDecl::Func(f) => { functions.insert(f.name.clone(), f); params.insert(f.name.clone(), vec![Value::default(); f.params.len()]); }
+                TopLevelDecl::Routine(r) => { params.insert(r.name.clone(), vec![Value::default(); r.params.len()]); }
+                _ => {}
+            }
+        }
+        Self { program, functions, params, returns: HashMap::new(), raised: HashMap::new(), flow: FunctionFlow::default(), changed: false, unresolved: HashSet::new() }
+    }
+    fn solve(&mut self) {
+        loop {
+            self.changed = false;
+            self.unresolved.clear();
+            for decl in &self.program.declarations {
+                let (name, params, body) = match decl {
+                    TopLevelDecl::Func(f) => (&f.name, f.params.as_slice(), f.body.as_slice()),
+                    TopLevelDecl::Routine(r) => (&r.name, r.params.as_slice(), r.body.as_slice()),
+                    TopLevelDecl::Loop(l) => (&l.name, &[][..], l.body.as_slice()),
+                    _ => continue,
+                };
+                let values = self.params.get(name).cloned().unwrap_or_default();
+                let mut scope = params.iter().zip(values).map(|(p,v)| (p.name.clone(),v)).collect();
+                let result = self.body(name, body, &mut scope);
+                self.changed |= self.returns.entry(name.clone()).or_default().merge(&result);
+            }
+            if !self.changed { break; }
+        }
+    }
+    fn signature(f: &FuncDecl) -> TypeSpec {
+        TypeSpec::Function(f.params.iter().map(|p| p.param_type.clone()).collect(), Box::new(f.return_type.clone().unwrap_or(TypeSpec::Primitive("Unknown".into()))))
+    }
+    // Open generic entries must admit every instantiation of their type
+    // parameters. Shape matching deliberately overapproximates equalities
+    // between repeated variables; instantiated calls are checked separately.
+    fn signature_shape_matches(a: &TypeSpec, avars: &[String], b: &TypeSpec, bvars: &[String]) -> bool {
+        if matches!(a, TypeSpec::Primitive(n) if avars.contains(n)) || matches!(b, TypeSpec::Primitive(n) if bvars.contains(n)) { return true; }
+        match (a,b) {
+            (TypeSpec::Primitive(a),TypeSpec::Primitive(b)) => a == b,
+            (TypeSpec::Ref(a),TypeSpec::Ref(b)) => Self::signature_shape_matches(a,avars,b,bvars),
+            (TypeSpec::Generic(an,a),TypeSpec::Generic(bn,b)) => an == bn && a.len() == b.len() && a.iter().zip(b).all(|(a,b)| Self::signature_shape_matches(a,avars,b,bvars)),
+            (TypeSpec::Function(a,ar),TypeSpec::Function(b,br)) => a.len() == b.len() && a.iter().zip(b).all(|(a,b)| Self::signature_shape_matches(a,avars,b,bvars)) && Self::signature_shape_matches(ar,avars,br,bvars),
+            _ => false,
+        }
+    }
+    fn candidates(&self, ty: &TypeSpec, type_params: &[String]) -> Value {
+        match ty {
+            TypeSpec::Function(_, _) => Value { targets: self.functions.iter().filter(|(_, f)| Self::signature_shape_matches(ty,type_params,&Self::signature(f),&f.type_params)).map(|(name,_)| name.clone()).collect(), ..Value::default() },
+            TypeSpec::Generic(_, args) => {
+                let mut result = Value::default();
+                for arg in args { let nested = self.candidates(arg,type_params); result.contents.extend(nested.targets); result.contents.extend(nested.contents); }
+                result
+            }
+            TypeSpec::Ref(inner) => self.candidates(inner,type_params),
+            // A type variable may itself be instantiated with a function or
+            // a container of functions. Do not silently treat it as scalar.
+            TypeSpec::Primitive(name) if type_params.contains(name) => Value { targets: self.functions.keys().cloned().collect(), contents: self.functions.keys().cloned().collect(), ..Value::default() },
+            _ => Value::default(),
+        }
+    }
+    fn seed_open_parameters(&mut self) {
+        for decl in &self.program.declarations {
+            let (name, params, type_params) = match decl { TopLevelDecl::Func(f) => (&f.name, &f.params, &f.type_params), TopLevelDecl::Routine(r) => (&r.name, &r.params, &r.type_params), _ => continue };
+            for (index,param) in params.iter().enumerate() {
+                let existing = &self.params[name][index];
+                if existing.targets.is_empty() && existing.contents.is_empty() && !existing.unknown {
+                    let fallback = self.candidates(&param.param_type,type_params);
+                    self.params.get_mut(name).unwrap()[index].merge(&fallback);
+                }
+            }
+        }
+    }
+    fn expr(&mut self, owner: &str, expr: &Expr, scope: &HashMap<String,Value>, spawn: bool) -> Value {
+        match expr {
+            Expr::Variable(name) => scope.get(name).cloned().unwrap_or_else(|| if self.functions.contains_key(name) { Value::named(name) } else if name == "True" || name == "False" { Value::default() } else { Value::unknown() }),
+            Expr::FunctionCall { name, args } => {
+                let (target, indirect) = match scope.get(name) {
+                    Some(value) => (value.clone(),true),
+                    None if name.contains('.') && scope.contains_key(name.split('.').next().unwrap_or(name)) => (Value::unknown(),true),
+                    None => (Value::named(name),false),
+                };
+                self.call(owner, expr, target, args, scope, spawn, indirect)
+            }
+            Expr::IndirectCall { target, args } => {
+                if let Expr::Specialize { target: named, .. } = target.as_ref() {
+                    if let Some(name) = Self::qualified(named) {
+                        if !scope.contains_key(name.split('.').next().unwrap_or(&name)) && (self.functions.contains_key(&name) || (spawn && self.params.contains_key(&name))) {
+                            return self.call(owner,expr,Value::named(&name),args,scope,spawn,false);
+                        }
+                    }
+                }
+                let value = self.expr(owner,target,scope,false);
+                self.call(owner, expr,value,args,scope,spawn,true)
+            }
+            Expr::ListLiteral(items) => {
+                let mut result = Value::default();
+                for item in items { let value = self.expr(owner,item,scope,false); result.contents.extend(value.targets); result.contents.extend(value.contents); result.contents_unknown |= value.unknown || value.contents_unknown; }
+                result
+            }
+            Expr::RefCreate(inner) | Expr::Specialize { target: inner, .. } => self.expr(owner,inner,scope,false),
+            Expr::MemberAccess { target, field } => {
+                if let Some(name) = Self::qualified(target) {
+                    // A local receiver shadows a package qualifier. Resolving
+                    // its member as a global function would omit a possible
+                    // dynamic value (or accept a non-function member).
+                    if scope.contains_key(name.split('.').next().unwrap_or(&name)) {
+                        self.expr(owner,target,scope,false);
+                        return Value::unknown();
+                    }
+                    let name = format!("{}.{}",name,field);
+                    if self.functions.contains_key(&name) { return Value::named(&name); }
+                }
+                self.expr(owner,target,scope,false);
+                Value::unknown()
+            }
+            Expr::BinaryOp { left, right, .. } => { self.expr(owner,left,scope,false); self.expr(owner,right,scope,false); Value::default() }
+            Expr::MemoryGet(_) | Expr::ReceiveSignal => Value::unknown(),
+            _ => Value::default(),
+        }
+    }
+    fn qualified(expr: &Expr) -> Option<String> { match expr { Expr::Variable(name) => Some(name.clone()), Expr::MemberAccess {target,field} => Some(format!("{}.{}",Self::qualified(target)?,field)), _ => None } }
+    fn call(&mut self, owner: &str, expr: &Expr, target: Value, args: &[Expr], scope: &HashMap<String,Value>, spawn: bool, indirect: bool) -> Value {
+        let values: Vec<_> = args.iter().map(|arg| self.expr(owner,arg,scope,false)).collect();
+        let id = expr as *const Expr as usize;
+        let before = self.flow.targets.entry(id).or_default().len();
+        self.flow.targets.entry(id).or_default().extend(target.targets.iter().cloned());
+        self.changed |= before != self.flow.targets[&id].len();
+        if indirect {
+            self.flow.indirect.insert(id);
+            if target.unknown || target.targets.is_empty() { self.unresolved.insert(format!("{}: {:?}",owner,expr)); }
+        }
+        let mut result = Value::default();
+        for name in &target.targets {
+            if !spawn {
+                self.changed |= self.flow.calls.entry(owner.to_owned()).or_default().insert(name.clone());
+                if indirect { self.changed |= self.flow.indirect_calls.entry(owner.to_owned()).or_default().insert(name.clone()); }
+            }
+            if let Some(params) = self.params.get_mut(name) {
+                for (param,value) in params.iter_mut().zip(&values) { self.changed |= param.merge(value); }
+            } else if indirect { self.unresolved.insert(format!("{}: {} is not a registered function",owner,name)); }
+            if let Some(raised) = self.raised.get(name).cloned() {
+                self.changed |= self.raised.entry(owner.to_owned()).or_default().merge(&raised);
+            }
+            // Only the certified qualified primitive has this transfer
+            // function. A user function named `prepend` must use its body.
+            if name == "std.prepend" {
+                if let Some(head) = values.first() { result.contents.extend(head.targets.iter().cloned()); result.contents.extend(head.contents.iter().cloned()); result.contents_unknown |= head.unknown || head.contents_unknown; }
+                if let Some(tail) = values.get(1) { result.merge(tail); }
+            } else if let Some(value) = self.returns.get(name) { result.merge(value); }
+            else if !self.params.contains_key(name) { result.unknown = true; }
+        }
+        result
+    }
+    fn bind(pattern: &Pattern, value: &Value, scope: &mut HashMap<String,Value>) {
+        match pattern {
+            Pattern::Identifier(name) => { scope.insert(name.clone(),value.clone()); }
+            Pattern::Constructor(name,parts) if name == "Cons" && parts.len() == 2 => { Self::bind(&parts[0],&value.element(),scope); Self::bind(&parts[1],value,scope); }
+            _ => {}
+        }
+    }
+    fn body(&mut self, owner: &str, body: &[Statement], scope: &mut HashMap<String,Value>) -> Value {
+        let mut result = Value::default();
+        for stmt in body {
+            result = match stmt {
+                Statement::VarDecl { name,value,.. } => { let value = self.expr(owner,value,scope,false); scope.insert(name.clone(),value); Value::default() }
+                Statement::ExprStmt(expr) => self.expr(owner,expr,scope,false),
+                Statement::Spawn(expr) => { self.expr(owner,expr,scope,true); Value::default() }
+                Statement::Throw(expr) => { let value=self.expr(owner,expr,scope,false); self.changed |= self.raised.entry(owner.to_owned()).or_default().merge(&value); Value::default() }
+                Statement::MemorySet {value:expr,..} | Statement::Signal {payload:expr,..} => { self.expr(owner,expr,scope,false); Value::default() }
+                Statement::Match { target,cases } => {
+                    let target = self.expr(owner,target,scope,false); let mut value = Value::default();
+                    for case in cases { let mut local=scope.clone(); Self::bind(&case.pattern,&target,&mut local); value.merge(&self.body(owner,&case.body,&mut local)); }
+                    value
+                }
+                Statement::ForLoop {var_name,collection,body} => { let collection=self.expr(owner,collection,scope,false); let mut local=scope.clone(); local.insert(var_name.clone(),collection.element()); self.body(owner,body,&mut local); Value::default() }
+                Statement::TryCatch {try_body,error_name,catch_body} => { let mut value=self.body(owner,try_body,&mut scope.clone()); let mut local=scope.clone(); local.insert(error_name.clone(),self.raised.get(owner).cloned().unwrap_or_default()); value.merge(&self.body(owner,catch_body,&mut local)); value }
+                Statement::Terminate => Value::default(),
+            };
+        }
+        result
+    }
+}

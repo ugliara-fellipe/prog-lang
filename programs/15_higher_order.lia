@@ -1,0 +1,24 @@
+// Named functions without capture are copied and passed by value.
+import std
+
+func double(x: Int) -> Int { x * 2 }
+func triple(x: Int) -> Int { x * 3 }
+func apply(f: (Int) -> Int, x: Int) -> Int { f(x) }
+func relay(f: (Int) -> Int) -> (Int) -> Int { f }
+func choose(flag: Bool) -> (Int) -> Int {
+    match flag { True => double, False => triple }
+}
+func recover() -> (Int) -> Int {
+    try { throw "fallback" } catch error { double }
+}
+routine Worker(f: (Int) -> Int) { std.log("worker", f(9)) }
+routine main() {
+    let source = choose(True)
+    let copied = source
+    let source = triple
+    std.log("copy", apply(copied, 5), source(5))
+    std.log("returned", relay(triple)(4), choose(False)(3), recover()(2))
+    for f in [double, triple] { std.log("list", f(3)) }
+    match [double] { Cons(f, Nil) => std.log("pattern", f(4)), _ => std.log("empty") }
+    spawn Worker(copied)
+}

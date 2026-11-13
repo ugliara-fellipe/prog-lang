@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use std::thread::{self, JoinHandle};
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
-use crate::runtime::actor::{LoopSpawn, Message, ReceivedSignal, SignalRouter};
+use crate::runtime::actor::{LoopSpawn, Message, ReceivedSignal, RuntimeValue, SignalRouter, EvaluationFailure};
 use crate::runtime::arena::RoutineArena;
 use crate::ast::{Statement, Expr, TypeSpec};
 
@@ -28,7 +28,7 @@ enum ExecutionControl {
     /// Normal completion of a statement.
     Continue,
     Terminate,
-    Throw(String),
+    Failure(EvaluationFailure),
 }
 
 impl WorkStealingPool {
@@ -176,13 +176,15 @@ impl WorkStealingPool {
                 } else { None };
 
                 let mut variable_types = HashMap::new();
+                let mut variable_values = msg.bindings.clone();
                 let mut stopped = false;
                 for stmt in &msg.statements {
-                    match Self::execute_statement(stmt, &arena, verbose, core_id, global, pending_tasks, &signal_router, received_signal.as_ref(), msg.is_loop.then_some(msg.routine_name.as_str()), &mut variable_types) {
+                    match Self::execute_statement(stmt, &arena, verbose, core_id, global, pending_tasks, &signal_router, received_signal.as_ref(), msg.is_loop.then_some(msg.routine_name.as_str()), &mut variable_types, &mut variable_values) {
                         ExecutionControl::Continue => {}
                         ExecutionControl::Terminate => { stopped = true; break; }
-                        ExecutionControl::Throw(error) => {
-                            if verbose { println!("  [Core #{} Exception] Unhandled: {}", core_id, error); }
+                        ExecutionControl::Failure(error) => {
+                            signal_router.report_error(format!("routine '{}': {}", msg.routine_name, error));
+                            shutdown.store(true, Ordering::Release);
                             stopped = true;
                             break;
                         }
@@ -209,113 +211,114 @@ impl WorkStealingPool {
         }
     }
 
-    fn execute_statement(stmt: &Statement, arena: &RoutineArena, verbose: bool, core_id: usize, global: &Injector<(Message, Arc<SignalRouter>)>, pending_tasks: &AtomicUsize, signal_router: &Arc<SignalRouter>, received_signal: Option<&ReceivedSignal>, loop_name: Option<&str>, variable_types: &mut HashMap<String, String>) -> ExecutionControl {
+    fn execute_statement(stmt: &Statement, arena: &RoutineArena, verbose: bool, core_id: usize, global: &Injector<(Message, Arc<SignalRouter>)>, pending_tasks: &AtomicUsize, signal_router: &Arc<SignalRouter>, received_signal: Option<&ReceivedSignal>, loop_name: Option<&str>, variable_types: &mut HashMap<String, String>, variable_values: &mut HashMap<String, RuntimeValue>) -> ExecutionControl {
+        let evaluate = |expr: &Expr| signal_router.evaluate_expression_with_context(expr, variable_values, received_signal, loop_name, variable_types);
+        macro_rules! value {
+            ($expr:expr) => { match evaluate($expr) { Ok(value) => value, Err(error) => return ExecutionControl::Failure(error) } };
+        }
         match stmt {
-            Statement::ExprStmt(expr) => {
-                Self::execute_expr(expr, arena, verbose, core_id, signal_router, received_signal, loop_name, variable_types);
-                ExecutionControl::Continue
-            }
+            Statement::ExprStmt(expr) => { value!(expr); ExecutionControl::Continue }
             Statement::VarDecl { name, value, is_mutable, type_annot } => {
-                let name_of_type = type_annot.as_ref().map(Self::type_spec_name).unwrap_or_else(|| Self::expression_type(value, variable_types));
-                variable_types.insert(name.clone(), name_of_type);
-                let formatted = Self::format_expr(value, signal_router, received_signal);
-                let stored = arena.alloc(formatted);
+                let result = value!(value);
+                let type_name = type_annot.as_ref().map(Self::type_spec_name).unwrap_or_else(|| result.type_name());
+                variable_types.insert(name.clone(), type_name);
                 if verbose {
-                    let mut_tag = if *is_mutable { "mut " } else { "" };
-                    println!("  [Core #{} Arena] Local variable let {}{} = {} allocated in Arena", core_id, mut_tag, name, stored);
+                    let stored = arena.alloc(result.to_string());
+                    println!("  [Core #{} Arena] Local variable let {}{} = {} allocated in Arena", core_id, if *is_mutable { "mut " } else { "" }, name, stored);
                 }
+                variable_values.insert(name.clone(), result);
                 ExecutionControl::Continue
             }
             Statement::MemorySet { name, value } => {
-                if let Some(loop_name) = loop_name {
-                    signal_router.memory_set(loop_name, name.clone(), Self::format_expr_value(value, signal_router, received_signal, Some(loop_name), variable_types));
-                }
+                let result = value!(value);
+                let Some(loop_name) = loop_name else { return ExecutionControl::Failure(EvaluationFailure::Invalid); };
+                signal_router.memory_set(loop_name, name.clone(), result.to_string());
                 ExecutionControl::Continue
             }
             Statement::Spawn(expr) => {
-                if let Expr::FunctionCall { name, args } = expr {
-                    // Loops have no call parameters. A single argument in a
-                    // spawn is therefore its asynchronous signal value.
-                    if signal_router.has_loop(name) {
-                        let payload = args.first().map(|arg| Self::format_expr_value(arg, signal_router, received_signal, loop_name, variable_types));
-                        match signal_router.spawn_or_signal(name, payload) {
-                            LoopSpawn::Started(loop_message) => {
-                                pending_tasks.fetch_add(1, Ordering::Release);
-                                global.push((loop_message, Arc::clone(signal_router)));
-                                if verbose { println!("  [Core #{} Loop] Started {}", core_id, name); }
-                            }
-                            LoopSpawn::Signalled => {
-                                if verbose { println!("  [Core #{} Loop Signal] queued -> {}", core_id, name); }
-                            }
-                            LoopSpawn::Unknown => {}
+                let Some((name, args)) = Self::spawn_call(expr) else { return ExecutionControl::Failure(EvaluationFailure::Invalid); };
+                if variable_values.contains_key(&name) || name.split_once('.').is_some_and(|(root, _)| variable_values.contains_key(root)) {
+                    return ExecutionControl::Failure(EvaluationFailure::Invalid);
+                }
+                let mut values = Vec::with_capacity(args.len());
+                for arg in args { values.push(value!(arg)); }
+                if signal_router.has_loop(&name) {
+                    if values.len() > 1 { return ExecutionControl::Failure(EvaluationFailure::Invalid); }
+                    match signal_router.spawn_or_signal(&name, values.first().map(ToString::to_string)) {
+                        LoopSpawn::Started(message) => {
+                            pending_tasks.fetch_add(1, Ordering::Release);
+                            global.push((message, Arc::clone(signal_router)));
                         }
-                        return ExecutionControl::Continue;
+                        LoopSpawn::Signalled => {}
+                        LoopSpawn::Unknown => return ExecutionControl::Failure(EvaluationFailure::Invalid),
                     }
-                    if let Some(routine_message) = signal_router.spawn_routine(
-                        name,
-                        Self::format_expr(expr, signal_router, received_signal),
-                    ) {
-                        pending_tasks.fetch_add(1, Ordering::Release);
-                        global.push((routine_message, Arc::clone(signal_router)));
-                        return ExecutionControl::Continue;
-                    }
-                }
-                if verbose {
-                    println!("  [Core #{} Concurrent Spawn] Dispatching actor for: {}", core_id, Self::format_expr(expr, signal_router, received_signal));
+                } else {
+                    let Some(message) = signal_router.spawn_routine_with_args(&name, format!("Spawn {}", name), values) else {
+                        return ExecutionControl::Failure(EvaluationFailure::Invalid);
+                    };
+                    pending_tasks.fetch_add(1, Ordering::Release);
+                    global.push((message, Arc::clone(signal_router)));
                 }
                 ExecutionControl::Continue
             }
-            Statement::Signal { loop_name, payload } => {
-                let delivered = signal_router.emit(loop_name, Self::format_expr_value(payload, signal_router, received_signal, Some(loop_name), variable_types));
-                if verbose {
-                    println!("  [Core #{} Signal] {} -> {}", core_id, if delivered { "queued" } else { "dropped" }, loop_name);
-                }
+            Statement::Signal { loop_name: target, payload } => {
+                let payload = value!(payload).to_string();
+                let delivered = signal_router.emit(target, payload);
+                if verbose { println!("  [Core #{} Signal] {} -> {}", core_id, if delivered { "queued" } else { "dropped" }, target); }
                 ExecutionControl::Continue
             }
-            Statement::Throw(value) => {
-                ExecutionControl::Throw(Self::format_expr_value(value, signal_router, received_signal, loop_name, variable_types))
-            }
+            Statement::Throw(expr) => ExecutionControl::Failure(EvaluationFailure::Thrown(value!(expr))),
             Statement::TryCatch { try_body, error_name, catch_body } => {
-                for statement in try_body {
-                    match Self::execute_statement(statement, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal, loop_name, variable_types) {
+                let mut local_values = variable_values.clone();
+                let mut local_types = variable_types.clone();
+                for stmt in try_body {
+                    match Self::execute_statement(stmt, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal, loop_name, &mut local_types, &mut local_values) {
                         ExecutionControl::Continue => {}
-                        ExecutionControl::Terminate => return ExecutionControl::Terminate,
-                        ExecutionControl::Throw(error) => {
-                            if verbose { println!("  [Core #{} Exception] {} caught: {}", core_id, error_name, error); }
-                            for statement in catch_body {
-                                match Self::execute_statement(statement, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal, loop_name, variable_types) {
+                        ExecutionControl::Failure(EvaluationFailure::Thrown(error)) => {
+                            let mut catch_values = variable_values.clone();
+                            let mut catch_types = variable_types.clone();
+                            catch_types.insert(error_name.clone(), error.type_name());
+                            catch_values.insert(error_name.clone(), error);
+                            for stmt in catch_body {
+                                match Self::execute_statement(stmt, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal, loop_name, &mut catch_types, &mut catch_values) {
                                     ExecutionControl::Continue => {}
                                     control => return control,
                                 }
                             }
                             return ExecutionControl::Continue;
                         }
-                    }
-                }
-                ExecutionControl::Continue
-            }
-            Statement::ForLoop { var_name, collection, body } => {
-                if verbose {
-                    println!("  [Core #{} Bounded Loop] Executing 'for {} in {}' ({} instructions)", core_id, var_name, Self::format_expr(collection, signal_router, received_signal), body.len());
-                }
-                for s in body {
-                    match Self::execute_statement(s, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal, loop_name, variable_types) {
-                        ExecutionControl::Continue => {}
                         control => return control,
                     }
                 }
                 ExecutionControl::Continue
             }
-            Statement::Match { target, cases } => {
-                if verbose {
-                    println!("  [Core #{} Match] Pattern matching on {} with {} evaluated cases.", core_id, Self::format_expr(target, signal_router, received_signal), cases.len());
-                }
-                if let Some(first_case) = cases.first() {
-                    for s in &first_case.body {
-                        match Self::execute_statement(s, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal, loop_name, variable_types) {
+            Statement::ForLoop { var_name, collection, body } => {
+                let RuntimeValue::List(items) = value!(collection) else { return ExecutionControl::Failure(EvaluationFailure::Invalid); };
+                for item in items {
+                    let mut local_values = variable_values.clone();
+                    let mut local_types = variable_types.clone();
+                    local_types.insert(var_name.clone(), item.type_name());
+                    local_values.insert(var_name.clone(), item);
+                    for stmt in body {
+                        match Self::execute_statement(stmt, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal, loop_name, &mut local_types, &mut local_values) {
                             ExecutionControl::Continue => {}
                             control => return control,
                         }
+                    }
+                }
+                ExecutionControl::Continue
+            }
+            Statement::Match { target, cases } => {
+                let target = value!(target);
+                let Some(case) = cases.iter().find(|case| SignalRouter::pattern_matches(&case.pattern, &target)) else { return ExecutionControl::Failure(EvaluationFailure::Invalid); };
+                let mut local_values = variable_values.clone();
+                let mut local_types = variable_types.clone();
+                SignalRouter::bind_pattern(&case.pattern, &target, &mut local_values);
+                for (name, value) in &local_values { local_types.entry(name.clone()).or_insert_with(|| value.type_name()); }
+                for stmt in &case.body {
+                    match Self::execute_statement(stmt, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal, loop_name, &mut local_types, &mut local_values) {
+                        ExecutionControl::Continue => {}
+                        control => return control,
                     }
                 }
                 ExecutionControl::Continue
@@ -324,98 +327,31 @@ impl WorkStealingPool {
         }
     }
 
+    fn spawn_call(expr: &Expr) -> Option<(String, &[Expr])> {
+        fn target_name(target: &Expr) -> Option<String> {
+            match target {
+                Expr::Variable(name) => Some(name.clone()),
+                Expr::MemberAccess { target, field } => Some(format!("{}.{}", target_name(target)?, field)),
+                Expr::Specialize { target, .. } => target_name(target),
+                _ => None,
+            }
+        }
+        match expr {
+            Expr::FunctionCall { name, args } => Some((name.clone(), args)),
+            Expr::IndirectCall { target, args } => Some((target_name(target)?, args)),
+            _ => None,
+        }
+    }
+
     fn type_spec_name(spec: &TypeSpec) -> String {
         match spec {
             TypeSpec::Primitive(name) => name.clone(),
             TypeSpec::Ref(inner) => format!("Ref[{}]", Self::type_spec_name(inner)),
+            TypeSpec::Function(args, result) => format!("({}) -> {}", args.iter().map(Self::type_spec_name).collect::<Vec<_>>().join(", "), Self::type_spec_name(result)),
             TypeSpec::Generic(name, args) => format!("{}[{}]", name, args.iter().map(Self::type_spec_name).collect::<Vec<_>>().join(", ")),
         }
     }
 
-    fn expression_type(expr: &Expr, types: &HashMap<String, String>) -> String {
-        match expr {
-            Expr::IntLiteral(_) => "Int".into(),
-            Expr::StringLiteral(_) | Expr::TypeOf(_) => "String".into(),
-            Expr::Variable(name) if name == "True" || name == "False" => "Bool".into(),
-            Expr::Variable(name) => types.get(name).cloned().unwrap_or_else(|| "Unknown".into()),
-            Expr::ListLiteral(items) => format!("List[{}]", items.first().map(|v| Self::expression_type(v, types)).unwrap_or_else(|| "Unknown".into())),
-            Expr::RefCreate(inner) => format!("Ref[{}]", Self::expression_type(inner, types)),
-            Expr::BinaryOp { left, .. } => Self::expression_type(left, types),
-            _ => "Unknown".into(),
-        }
-    }
-
-    fn execute_expr(expr: &Expr, _arena: &RoutineArena, verbose: bool, core_id: usize, signal_router: &SignalRouter, received_signal: Option<&ReceivedSignal>, loop_name: Option<&str>, variable_types: &HashMap<String, String>) {
-        if let Expr::FunctionCall { name, args } = expr {
-            if name == "std.log" {
-                let parts: Vec<String> = args.iter().map(|arg| Self::format_expr_value(arg, signal_router, received_signal, loop_name, variable_types)).collect();
-                println!("{}", parts.join(" "));
-            } else if verbose {
-                let parts: Vec<String> = args.iter().map(|arg| Self::format_expr_value(arg, signal_router, received_signal, loop_name, variable_types)).collect();
-                println!("  [Core #{} Function Call]: {}({})", core_id, name, parts.join(", "));
-            }
-        }
-    }
-
-    fn format_expr_value(expr: &Expr, signal_router: &SignalRouter, received_signal: Option<&ReceivedSignal>, loop_name: Option<&str>, variable_types: &HashMap<String, String>) -> String {
-        match expr {
-            Expr::StringLiteral(s) => s.clone(),
-            Expr::IntLiteral(n) => n.to_string(),
-            Expr::ListLiteral(items) => format!("[{}]", items.iter().map(|item| Self::format_expr_value(item, signal_router, received_signal, loop_name, variable_types)).collect::<Vec<_>>().join(", ")),
-            Expr::Variable(v) => v.clone(),
-            Expr::TypeOf(name) => variable_types.get(name).cloned().unwrap_or_else(|| "Unknown".into()),
-            Expr::MemoryGet(key) => loop_name.and_then(|name| signal_router.memory_get(name, key)).unwrap_or_else(|| "None".to_string()),
-            Expr::BinaryOp { op, left, right } => {
-                format!("{} {} {}", Self::format_expr_value(left, signal_router, received_signal, loop_name, variable_types), op, Self::format_expr_value(right, signal_router, received_signal, loop_name, variable_types))
-            }
-            Expr::MemberAccess { target, field } => {
-                if matches!(target.as_ref(), Expr::ReceiveSignal) {
-                    match field.as_str() {
-                        "value" => received_signal.and_then(|signal| signal.value.clone()).unwrap_or_else(|| "None".to_string()),
-                        "pending" => received_signal.map(|signal| signal.pending.to_string()).unwrap_or_else(|| "0".to_string()),
-                        _ => format!("message.{}", field),
-                    }
-                } else { format!("{}.{}", Self::format_expr_value(target, signal_router, received_signal, loop_name, variable_types), field) }
-            }
-            Expr::RefCreate(inner) => {
-                format!("ref {}", Self::format_expr_value(inner, signal_router, received_signal, loop_name, variable_types))
-            }
-            Expr::FunctionCall { name, args } => {
-                let values = args.iter().map(|arg| signal_router.evaluate_expression(arg)).collect::<Option<Vec<_>>>();
-                if let Some(values) = values {
-                    if let Some(result) = signal_router.evaluate_function(name, values) { return result.to_string(); }
-                }
-                let parts: Vec<String> = args.iter().map(|arg| Self::format_expr_value(arg, signal_router, received_signal, loop_name, variable_types)).collect();
-                format!("{}({})", name, parts.join(", "))
-            }
-            Expr::ReceiveSignal => received_signal.and_then(|signal| signal.value.clone()).unwrap_or_else(|| "None".to_string()),
-        }
-    }
-
-    fn format_expr(expr: &Expr, signal_router: &SignalRouter, received_signal: Option<&ReceivedSignal>) -> String {
-        match expr {
-            Expr::StringLiteral(s) => format!("\"{}\"", s),
-            Expr::IntLiteral(n) => n.to_string(),
-            Expr::ListLiteral(items) => format!("[{}]", items.iter().map(|item| Self::format_expr(item, signal_router, received_signal)).collect::<Vec<_>>().join(", ")),
-            Expr::Variable(v) => v.clone(),
-            Expr::TypeOf(name) => format!("type {}", name),
-            Expr::MemoryGet(key) => format!("memory {}", key),
-            Expr::BinaryOp { op, left, right } => {
-                format!("({} {} {})", Self::format_expr(left, signal_router, received_signal), op, Self::format_expr(right, signal_router, received_signal))
-            }
-            Expr::MemberAccess { target, field } => {
-                format!("{}.{}", Self::format_expr(target, signal_router, received_signal), field)
-            }
-            Expr::RefCreate(inner) => {
-                format!("ref {}", Self::format_expr(inner, signal_router, received_signal))
-            }
-            Expr::FunctionCall { name, args } => {
-                let parts: Vec<String> = args.iter().map(|arg| Self::format_expr(arg, signal_router, received_signal)).collect();
-                format!("{}({})", name, parts.join(", "))
-            }
-            Expr::ReceiveSignal => "message".to_string(),
-        }
-    }
 
 }
 

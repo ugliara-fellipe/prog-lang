@@ -24,7 +24,7 @@ topLevelDecl
     ;
 
 typeDecl
-    : 'type' ID '{' structField (',' structField)* ','? '}'
+    : 'type' ID typeParams? '{' structField (',' structField)* ','? '}'
     ;
 
 structField
@@ -32,11 +32,15 @@ structField
     ;
 
 funcDecl
-    : 'func' ID '(' paramList? ')' ('->' typeSpec)? block
+    : 'func' ID typeParams? '(' paramList? ')' ('->' typeSpec)? block
     ;
 
 routineDecl
-    : 'routine' ID '(' routineParamList? ')' block
+    : 'routine' ID typeParams? '(' routineParamList? ')' block
+    ;
+
+typeParams
+    : '<' ID (',' ID)* '>'
     ;
 
 loopDecl
@@ -48,7 +52,11 @@ routineParamList
     ;
 
 routineParam
-    : ID ':' (listType | primitiveType | genericType | customType)
+    : ID ':' typeSpec
+    ;
+
+paramList
+    : param (',' param)*
     ;
 
 param
@@ -56,7 +64,8 @@ param
     ;
 
 typeSpec
-    : listType
+    : '(' (typeSpec (',' typeSpec)*)? ')' '->' typeSpec
+    | listType
     | refType
     | primitiveType
     | genericType
@@ -157,6 +166,7 @@ expr
     | 'ref' expr                                           # RefExpr
     | 'type' ID                                            # TypeOfExpr
     | expr '(' argList? ')'                                # CallExpr
+    | expr '<' typeSpec (',' typeSpec)* '>'                  # SpecializeExpr
     | expr '.' ID                                          # MemberAccessExpr
     | expr op=('*' | '/') expr                             # MulDivExpr
     | expr op=('+' | '-') expr                             # AddSubExpr
