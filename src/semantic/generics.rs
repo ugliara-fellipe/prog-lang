@@ -20,9 +20,10 @@ pub fn unify(pattern: &TypeSpec, actual: &TypeSpec, variables: &HashSet<String>,
     match (pattern, actual) {
         (TypeSpec::Primitive(name), _) if variables.contains(name) => {
             if matches!(actual, TypeSpec::Primitive(name) if name == "Unknown") { return true; }
-            match bindings.get(name) { Some(previous) => previous == actual, None => { bindings.insert(name.clone(), actual.clone()); true } }
+            match bindings.get(name) { Some(previous) => previous == actual || matches!(previous,TypeSpec::Primitive(n) if n=="Json") && crate::semantic::json_types::is_json_shape(actual,true), None => { bindings.insert(name.clone(), actual.clone()); true } }
         }
         (_, TypeSpec::Primitive(name)) if name == "Unknown" => true,
+        (TypeSpec::Primitive(n),actual) if n=="Json"=>crate::semantic::json_types::is_json_shape(actual,true),
         (TypeSpec::Generic(name, args), TypeSpec::Generic(other, actual)) if name == other && args.len() == actual.len() => args.iter().zip(actual).all(|(a,b)| unify(a,b,variables,bindings)),
         (TypeSpec::Ref(a), TypeSpec::Ref(b)) => unify(a,b,variables,bindings),
         (TypeSpec::Function(args, result), TypeSpec::Function(actual, actual_result)) if args.len() == actual.len() => args.iter().zip(actual).all(|(a,b)| unify(a,b,variables,bindings)) && unify(result,actual_result,variables,bindings),

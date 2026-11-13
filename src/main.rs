@@ -421,6 +421,9 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
         "programs/16_generics.lia",
         "programs/17_enums.lia",
         "programs/18_closures.lia",
+        "programs/19_option_result.lia",
+        "programs/20_tailcalls.lia",
+        "programs/21_dictionary_json.lia",
         "programs/math.lia",
         "programs/std.lia",
     ];

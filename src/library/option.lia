@@ -1,0 +1,20 @@
+// Bundled ordinary Lia code. Import explicitly with `import option`.
+type Option<T> = Some(T) | None
+func is_some<T>(value: Option[T]) -> Bool {
+    match value { Some(_) => True, None => False }
+}
+func is_none<T>(value: Option[T]) -> Bool {
+    match value { Some(_) => False, None => True }
+}
+func unwrap_or<T>(value: Option[T], fallback: T) -> T {
+    match value { Some(x) => x, None => fallback }
+}
+func unwrap_or_else<T>(value: Option[T], fallback: () -> T) -> T {
+    match value { Some(x) => x, None => fallback() }
+}
+func map<T, U>(value: Option[T], f: (T) -> U) -> Option[U] {
+    match value { Some(x) => Some<U>(f(x)), None => None<U> }
+}
+func and_then<T, U>(value: Option[T], f: (T) -> Option[U]) -> Option[U] {
+    match value { Some(x) => f(x), None => None<U> }
+}

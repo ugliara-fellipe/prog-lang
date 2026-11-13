@@ -46,6 +46,8 @@ pub enum Expr {
     IntLiteral(i64),
     StringLiteral(String),
     ListLiteral(Vec<Expr>),
+    DictLiteral(Vec<(String,Expr)>),
+    Index { target: Box<Expr>, key: Box<Expr> },
     Variable(String),
     /// Returns the type name of a variable as a string.
     TypeOf(String),
@@ -55,6 +57,8 @@ pub enum Expr {
     /// Reads a value stored in the current persistent loop's private memory.
     MemoryGet(String),
     RefCreate(Box<Expr>),
+    /// Asserts that a call is in a function return position.
+    TailCall(Box<Expr>),
     FunctionCall { name: String, args: Vec<Expr> },
     /// Calls the function value produced by an expression.
     IndirectCall { target: Box<Expr>, args: Vec<Expr> },

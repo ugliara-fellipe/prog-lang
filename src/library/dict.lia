@@ -1,0 +1,10 @@
+// Certified finite value operations. Implementations live in the runtime.
+import option
+func empty<T>() -> Dict[T] {}
+func get<T>(value: Dict[T], key: String) -> Option[T] {}
+func set<T>(value: Dict[T], key: String, item: T) -> Dict[T] {}
+func remove<T>(value: Dict[T], key: String) -> Dict[T] {}
+func has<T>(value: Dict[T], key: String) -> Bool {}
+func keys<T>(value: Dict[T]) -> List[String] {}
+func values<T>(value: Dict[T]) -> List[T] {}
+func len<T>(value: Dict[T]) -> Int {}

@@ -66,13 +66,15 @@ termina. Sua obrigação de correção é conservadora: todo destino concreto
 possível deve aparecer no conjunto abstrato. Podem ocorrer falsos positivos,
 isto é, destinos incluídos que nunca aparecem em execução.
 
-O conjunto vazio não deve representar silenciosamente um destino desconhecido:
-ele pode significar que ainda não houve propagação ou que não há valor possível.
-A implementação precisa representar separadamente casos desconhecidos ou não
-suportados e rejeitá-los quando não conseguir demonstrar que a chamada é
-segura. Compatibilidade de assinatura, sozinha, não demonstra o fluxo de um
-valor; pode ser usada como aproximação conservadora se nenhum destino possível
-for omitido.
+O conjunto vazio e o estado desconhecido têm representações separadas. Depois
+do ponto fixo e da propagação conservadora para parâmetros abertos, um conjunto
+vazio é o fundo do domínio: nenhuma função conhecida pode chegar ao operando
+naquele programa fechado, como ocorre em helpers genéricos não utilizados.
+Esse estado não introduz arestas. Um destino desconhecido, por exemplo obtido
+por uma leitura dinâmica não modelada, continua sendo rejeitado. O verificador
+de tipos também rejeita chamadas cujo operando não tenha tipo função.
+Compatibilidade de assinatura pode fornecer uma aproximação conservadora para
+parâmetros abertos, sem omitir nenhum destino possível.
 
 ## Grafo de chamadas e terminação
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap,BTreeMap};
 use std::sync::Mutex;
 use crossbeam_channel::{Receiver, Sender};
 use tokio::sync::mpsc;
@@ -27,6 +27,19 @@ pub enum EvaluationFailure {
     Invalid,
     Thrown(RuntimeValue),
 }
+
+struct ExceptionHandler {
+    error_name: String,
+    body: Vec<Statement>,
+    scope: HashMap<String,RuntimeValue>,
+}
+struct TailInvocation {
+    target: RuntimeValue,
+    args: Vec<RuntimeValue>,
+    // Outer handlers precede inner ones; the trampoline pops the innermost.
+    handlers: Vec<ExceptionHandler>,
+}
+enum EvaluationStep { Value(RuntimeValue), Tail(TailInvocation) }
 
 /// Mailboxes for persistent loops. `Sender::send` on an unbounded channel
 /// never waits for the receiving loop, so emitting a signal cannot block its
@@ -74,6 +87,9 @@ pub enum RuntimeValue {
     String(String),
     Bool(bool),
     List(Vec<RuntimeValue>),
+    Dict(BTreeMap<String,RuntimeValue>),
+    Null,
+    JsonNumber(serde_json::Number),
     /// A named function without captured state. Cloning copies its identity.
     Function(String),
     Closure { params: Vec<Param>, body: Vec<Statement>, captures: HashMap<String,RuntimeValue> },
@@ -102,18 +118,24 @@ impl std::fmt::Display for RuntimeValue {
                 if !fields.is_empty() {write!(formatter,"(")?;for (i,field) in fields.iter().enumerate(){if i>0 {write!(formatter,", ")?;}write!(formatter,"{}",field)?;}write!(formatter,")")?;}
                 Ok(())
             }
+            RuntimeValue::Dict(items)=>{write!(formatter,"{{")?;for (i,(k,v)) in items.iter().enumerate(){if i>0{write!(formatter,", ")?;}write!(formatter,"{:?}: {}",k,v)?;}write!(formatter,"}}")},
+            RuntimeValue::Null=>write!(formatter,"null"),
+            RuntimeValue::JsonNumber(n)=>write!(formatter,"{}",n),
             RuntimeValue::None => write!(formatter, "None"),
         }
     }
 }
 
 impl RuntimeValue {
+    pub(crate) fn iteration_items(self)->Option<Vec<Self>>{match self{Self::List(v)=>Some(v),Self::Dict(d)=>Some(d.into_keys().map(Self::String).collect()),_=>None}}
     pub(crate) fn type_name(&self) -> String {
         match self {
             Self::Int(_) => "Int".into(), Self::String(_) => "String".into(),
             Self::Bool(_) => "Bool".into(), Self::None => "None".into(),
             Self::Function(_) | Self::Closure{..} => "Function".into(),
             Self::Enum {enum_name,..} => enum_name.clone(),
+            Self::Dict(_)=>"Dict".into(),
+            Self::Null|Self::JsonNumber(_)=>"Json".into(),
             Self::List(items) => format!("List[{}]", items.first().map(Self::type_name).unwrap_or_else(|| "Unknown".into())),
         }
     }
@@ -157,37 +179,57 @@ impl SignalRouter {
     }
 
     pub fn evaluate_function_result(&self, name: &str, args: Vec<RuntimeValue>) -> Result<RuntimeValue, EvaluationFailure> {
-        let constructor=self.constructors.lock().expect("constructor registry lock poisoned").entries.get(name).cloned();
-        if let Some(c)=constructor {
-            if args.len()!=c.fields.len() {return Err(EvaluationFailure::Invalid);}
-            return Ok(RuntimeValue::Enum{enum_name:c.owner,variant:c.variant,fields:args});
-        }
-        if crate::stdlib::is_total_standard_function(name) {
-            // A direct runtime call cannot bypass package resolution either:
-            // only a registered, imported declaration unlocks `std.*`.
-            if !self.functions.lock().expect("function registry lock poisoned").contains_key(name) {
-                return Err(EvaluationFailure::Invalid);
-            }
-            return Self::evaluate_std_function(name, &args).ok_or(EvaluationFailure::Invalid);
-        }
-        let function = self.functions.lock().expect("function registry lock poisoned").get(name).cloned().ok_or(EvaluationFailure::Invalid)?;
-        if function.params.len() != args.len() { return Err(EvaluationFailure::Invalid); }
-        let mut scope = HashMap::new();
-        for (param, value) in function.params.iter().zip(args) {
-            scope.insert(param.name.clone(), value);
-        }
-        Self::evaluate_block(&function.body, &mut scope, self)
+        self.invoke_value(RuntimeValue::Function(name.into()),args)
     }
 
-    fn invoke_value(&self,target:RuntimeValue,args:Vec<RuntimeValue>)->Result<RuntimeValue,EvaluationFailure>{
-        match target {
-            RuntimeValue::Function(name)=>self.evaluate_function_result(&name,args),
-            RuntimeValue::Closure{params,body,mut captures}=>{
-                if params.len()!=args.len(){return Err(EvaluationFailure::Invalid);}
-                for (param,value) in params.iter().zip(args){captures.insert(param.name.clone(),value);}
-                Self::evaluate_block(&body,&mut captures,self)
-            },
-            _=>Err(EvaluationFailure::Invalid),
+    fn invoke_value(&self,mut target:RuntimeValue,mut args:Vec<RuntimeValue>)->Result<RuntimeValue,EvaluationFailure>{
+        let mut handlers:Vec<ExceptionHandler>=Vec::new();
+        loop {
+            let outcome=match target {
+                RuntimeValue::Function(name)=>{
+                    let constructor=self.constructors.lock().expect("constructor registry lock poisoned").entries.get(&name).cloned();
+                    if let Some(c)=constructor {
+                        if args.len()!=c.fields.len(){Err(EvaluationFailure::Invalid)}
+                        else {Ok(EvaluationStep::Value(RuntimeValue::Enum{enum_name:c.owner,variant:c.variant,fields:args}))}
+                    } else if crate::stdlib::is_bundled_native_function(&name) {
+                        if !self.functions.lock().expect("function registry lock poisoned").contains_key(&name){Err(EvaluationFailure::Invalid)}else{self.evaluate_data_function(&name,&args).map(EvaluationStep::Value)}
+                    } else if crate::stdlib::is_total_standard_function(&name) {
+                        if !self.functions.lock().expect("function registry lock poisoned").contains_key(&name) {Err(EvaluationFailure::Invalid)}
+                        else {Self::evaluate_std_function(&name,&args).map(EvaluationStep::Value).ok_or(EvaluationFailure::Invalid)}
+                    } else {
+                        let function=self.functions.lock().expect("function registry lock poisoned").get(&name).cloned();
+                        match function {
+                            Some(f) if f.params.len()==args.len()=>{
+                                let mut scope=f.params.iter().zip(args).map(|(p,v)|(p.name.clone(),v)).collect();
+                                Self::evaluate_block_step(&f.body,&mut scope,self,true)
+                            },
+                            _=>Err(EvaluationFailure::Invalid)
+                        }
+                    }
+                },
+                RuntimeValue::Closure{params,body,mut captures}=>{
+                    if params.len()!=args.len(){Err(EvaluationFailure::Invalid)} else {
+                        for (p,v) in params.iter().zip(args){captures.insert(p.name.clone(),v);}
+                        Self::evaluate_block_step(&body,&mut captures,self,true)
+                    }
+                },
+                _=>Err(EvaluationFailure::Invalid)
+            };
+            let mut outcome=outcome;
+            loop {
+                match outcome {
+                    Ok(EvaluationStep::Value(value))=>return Ok(value),
+                    Ok(EvaluationStep::Tail(call))=>{
+                        target=call.target;args=call.args;handlers.extend(call.handlers);break;
+                    },
+                    Err(EvaluationFailure::Thrown(value))=>{
+                        let Some(mut handler)=handlers.pop() else {return Err(EvaluationFailure::Thrown(value));};
+                        handler.scope.insert(handler.error_name,value);
+                        outcome=Self::evaluate_block_step(&handler.body,&mut handler.scope,self,true);
+                    },
+                    Err(error)=>return Err(error)
+                }
+            }
         }
     }
 
@@ -224,56 +266,79 @@ impl SignalRouter {
         !self.errors.lock().expect("runtime errors lock poisoned").is_empty()
     }
 
-    fn evaluate_block(
-        body: &[Statement],
-        scope: &mut HashMap<String, RuntimeValue>,
-        router: &SignalRouter,
-    ) -> Result<RuntimeValue, EvaluationFailure> {
-        let mut result = RuntimeValue::None;
-        for statement in body {
-            match statement {
-                Statement::VarDecl { name, value, .. } => {
-                    let value = Self::evaluate_expr(value, scope, router)?;
-                    scope.insert(name.clone(), value);
+    fn evaluate_block_step(
+        body:&[Statement],scope:&mut HashMap<String,RuntimeValue>,router:&SignalRouter,tail:bool,
+    )->Result<EvaluationStep,EvaluationFailure>{
+        let mut result=RuntimeValue::None;
+        for (i,stmt) in body.iter().enumerate(){let last=tail && i+1==body.len();match stmt {
+            Statement::VarDecl{name,value,..}=>{let value=Self::evaluate_expr(value,scope,router)?;scope.insert(name.clone(),value);},
+            Statement::ExprStmt(expr)=>{
+                if last {return Self::evaluate_tail_expr(expr,scope,router);}
+                result=Self::evaluate_expr(expr,scope,router)?;
+            },
+            Statement::Match{target,cases}=>{
+                let value=Self::evaluate_expr(target,scope,router)?;
+                let case=cases.iter().find(|c|router.pattern_matches(&c.pattern,&value)).ok_or(EvaluationFailure::Invalid)?;
+                let mut branch=scope.clone();Self::bind_pattern(&case.pattern,&value,&mut branch);
+                match Self::evaluate_block_step(&case.body,&mut branch,router,last)? {
+                    EvaluationStep::Value(value)=>result=value,
+                    call@EvaluationStep::Tail(_)=>return Ok(call),
                 }
-                Statement::MemorySet { .. } => return Err(EvaluationFailure::Invalid),
-                Statement::ExprStmt(expr) => result = Self::evaluate_expr(expr, scope, router)?,
-                Statement::Match { target, cases } => {
-                    let value = Self::evaluate_expr(target, scope, router)?;
-                    let case = cases.iter().find(|case| router.pattern_matches(&case.pattern, &value)).ok_or(EvaluationFailure::Invalid)?;
-                    let mut branch_scope = scope.clone();
-                    Self::bind_pattern(&case.pattern, &value, &mut branch_scope);
-                    result = Self::evaluate_block(&case.body, &mut branch_scope, router)?;
+            },
+            Statement::ForLoop{var_name,collection,body}=>{
+                let items=Self::evaluate_expr(collection,scope,router)?.iteration_items().ok_or(EvaluationFailure::Invalid)?;
+                for item in items {let mut local=scope.clone();local.insert(var_name.clone(),item);
+                    let EvaluationStep::Value(value)=Self::evaluate_block_step(body,&mut local,router,false)? else{return Err(EvaluationFailure::Invalid);};
+                    result=value;
                 }
-                Statement::ForLoop { var_name, collection, body } => {
-                    let RuntimeValue::List(items) = Self::evaluate_expr(collection, scope, router)? else { return Err(EvaluationFailure::Invalid); };
-                    for item in items {
-                        let mut iteration_scope = scope.clone();
-                        iteration_scope.insert(var_name.clone(), item);
-                        result = Self::evaluate_block(body, &mut iteration_scope, router)?;
-                    }
-                }
-                Statement::TryCatch { try_body, error_name, catch_body } => {
-                    let mut try_scope = scope.clone();
-                    result = match Self::evaluate_block(try_body, &mut try_scope, router) {
-                        Ok(value) => value,
-                        Err(EvaluationFailure::Thrown(value)) => {
-                            let mut catch_scope = scope.clone();
-                            catch_scope.insert(error_name.clone(), value);
-                            Self::evaluate_block(catch_body, &mut catch_scope, router)?
-                        }
-                        Err(error) => return Err(error),
-                    };
-                }
-                Statement::Throw(expr) => return Err(EvaluationFailure::Thrown(Self::evaluate_expr(expr, scope, router)?)),
-                Statement::Signal { loop_name, payload } => {
-                    let payload = Self::evaluate_expr(payload, scope, router)?;
-                    router.emit(loop_name, payload.to_string());
-                }
-                Statement::Spawn(_) | Statement::Terminate => return Err(EvaluationFailure::Invalid),
-            }
-        }
-        Ok(result)
+            },
+            Statement::TryCatch{try_body,error_name,catch_body}=>{
+                let mut local=scope.clone();
+                let step=match Self::evaluate_block_step(try_body,&mut local,router,last){
+                    Ok(EvaluationStep::Tail(mut call))=>{
+                        call.handlers.insert(0,ExceptionHandler{error_name:error_name.clone(),body:catch_body.clone(),scope:scope.clone()});
+                        return Ok(EvaluationStep::Tail(call));
+                    },
+                    Ok(value)=>value,
+                    Err(EvaluationFailure::Thrown(value))=>{
+                        let mut local=scope.clone();local.insert(error_name.clone(),value);
+                        Self::evaluate_block_step(catch_body,&mut local,router,last)?
+                    },
+                    Err(error)=>return Err(error),
+                };
+                match step {EvaluationStep::Value(value)=>result=value,call@EvaluationStep::Tail(_)=>return Ok(call)}
+            },
+            Statement::Throw(expr)=>return Err(EvaluationFailure::Thrown(Self::evaluate_expr(expr,scope,router)?)),
+            Statement::Signal{loop_name,payload}=>{let value=Self::evaluate_expr(payload,scope,router)?;router.emit(loop_name,value.to_string());},
+            Statement::Spawn(_)|Statement::Terminate|Statement::MemorySet{..}=>return Err(EvaluationFailure::Invalid),
+        }}
+        Ok(EvaluationStep::Value(result))
+    }
+
+    fn prepare_call(expr:&Expr,scope:&HashMap<String,RuntimeValue>,router:&SignalRouter,context:EvaluationContext<'_>)->Result<TailInvocation,EvaluationFailure>{
+        let (target,args)=match expr {
+            Expr::FunctionCall{name,args}=>{
+                if Self::qualified_is_shadowed(name,scope){return Err(EvaluationFailure::Invalid);}
+                (scope.get(name).cloned().unwrap_or_else(||RuntimeValue::Function(name.clone())),args)
+            },
+            Expr::IndirectCall{target,args}=>{
+                let constructor=if let Expr::Specialize{target:named,..}=target.as_ref(){
+                    Self::qualified_expression_name(named).filter(|name|!Self::qualified_is_shadowed(name,scope) && !scope.contains_key(name) && router.constructors.lock().expect("constructor registry lock poisoned").entries.contains_key(name))
+                }else{None};
+                let target=if let Some(name)=constructor{RuntimeValue::Function(name)}else{Self::evaluate_expr_context(target,scope,router,context)?};
+                (target,args)
+            },
+            _=>return Err(EvaluationFailure::Invalid),
+        };
+        let args=args.iter().map(|a|Self::evaluate_expr_context(a,scope,router,context)).collect::<Result<Vec<_>,_>>()?;
+        Ok(TailInvocation{target,args,handlers:Vec::new()})
+    }
+    fn evaluate_tail_expr(expr:&Expr,scope:&HashMap<String,RuntimeValue>,router:&SignalRouter)->Result<EvaluationStep,EvaluationFailure>{
+        let call=if let Expr::TailCall(call)=expr{call.as_ref()}else{expr};
+        if matches!(call,Expr::FunctionCall{..}|Expr::IndirectCall{..}) {
+            Ok(EvaluationStep::Tail(Self::prepare_call(call,scope,router,EvaluationContext::default())?))
+        } else if matches!(expr,Expr::TailCall(_)){Err(EvaluationFailure::Invalid)}
+        else {Ok(EvaluationStep::Value(Self::evaluate_expr(expr,scope,router)?))}
     }
 
     fn evaluate_expr(expr: &Expr, scope: &HashMap<String, RuntimeValue>, router: &SignalRouter) -> Result<RuntimeValue, EvaluationFailure> {
@@ -288,6 +353,8 @@ impl SignalRouter {
             },
             Expr::IntLiteral(value) => Ok(RuntimeValue::Int(*value)),
             Expr::StringLiteral(value) => Ok(RuntimeValue::String(value.clone())),
+            Expr::DictLiteral(items)=>{let mut result=BTreeMap::new();for (k,v) in items{result.insert(k.clone(),Self::evaluate_expr_context(v,scope,router,context)?);}Ok(RuntimeValue::Dict(result))},
+            Expr::Index{target,key}=>{let RuntimeValue::Dict(items)=Self::evaluate_expr_context(target,scope,router,context)? else{return Err(EvaluationFailure::Invalid);};let RuntimeValue::String(key)=Self::evaluate_expr_context(key,scope,router,context)? else{return Err(EvaluationFailure::Invalid);};router.option_value(items.get(&key).cloned())},
             Expr::ListLiteral(items) => Ok(RuntimeValue::List(items.iter().map(|item| Self::evaluate_expr_context(item, scope, router, context)).collect::<Result<Vec<_>, _>>()?)),
             Expr::Variable(name) if Self::qualified_is_shadowed(name, scope) => Err(EvaluationFailure::Invalid),
             Expr::Variable(name) => match name.as_str() {
@@ -299,22 +366,11 @@ impl SignalRouter {
                 }).or_else(||router.constructor_value(name)).ok_or(EvaluationFailure::Invalid),
             },
             Expr::TypeOf(name) => Ok(RuntimeValue::String(context.types.and_then(|types| types.get(name)).cloned().or_else(|| scope.get(name).map(RuntimeValue::type_name)).ok_or(EvaluationFailure::Invalid)?)),
-            Expr::FunctionCall { name, args } => {
-                if Self::qualified_is_shadowed(name, scope) { return Err(EvaluationFailure::Invalid); }
-                let target=scope.get(name).cloned().unwrap_or_else(||RuntimeValue::Function(name.clone()));
-                router.invoke_value(target,args.iter().map(|arg|Self::evaluate_expr_context(arg,scope,router,context)).collect::<Result<Vec<_>,_>>()?)
-            }
-            Expr::IndirectCall { target, args } => {
-                if let Expr::Specialize{target:named,..}=target.as_ref() {
-                    if let Some(name)=Self::qualified_expression_name(named) {
-                        if !Self::qualified_is_shadowed(&name,scope) && !scope.contains_key(&name) && router.constructors.lock().unwrap().entries.contains_key(&name) {
-                            return router.evaluate_function_result(&name,args.iter().map(|arg|Self::evaluate_expr_context(arg,scope,router,context)).collect::<Result<Vec<_>,_>>()?);
-                        }
-                    }
-                }
-                let target=Self::evaluate_expr_context(target,scope,router,context)?;
-                router.invoke_value(target,args.iter().map(|arg|Self::evaluate_expr_context(arg,scope,router,context)).collect::<Result<Vec<_>,_>>()?)
-            }
+            Expr::FunctionCall{..}|Expr::IndirectCall{..}=>{
+                let call=Self::prepare_call(expr,scope,router,context)?;
+                router.invoke_value(call.target,call.args)
+            },
+            Expr::TailCall(_)=>Err(EvaluationFailure::Invalid),
             // Type arguments are checked statically. Named functions carry
             // no captured state, so instantiation preserves their identity.
             Expr::Specialize { target, .. } => Self::evaluate_expr_context(target, scope, router, context),
@@ -564,5 +620,70 @@ impl ActorHandle {
             .send(msg)
             .await
             .map_err(|e| format!("Failed to dispatch spawn for routine: {}", e))
+    }
+}
+
+impl RuntimeValue {
+    fn from_json(value:serde_json::Value)->Self {
+        match value {
+            serde_json::Value::Null=>Self::Null,
+            serde_json::Value::Bool(v)=>Self::Bool(v),
+            serde_json::Value::String(v)=>Self::String(v),
+            serde_json::Value::Number(v)=>v.as_i64().map(Self::Int).unwrap_or(Self::JsonNumber(v)),
+            serde_json::Value::Array(v)=>Self::List(v.into_iter().map(Self::from_json).collect()),
+            serde_json::Value::Object(v)=>Self::Dict(v.into_iter().map(|(k,v)|(k,Self::from_json(v))).collect()),
+        }
+    }
+    fn to_json(&self)->Result<serde_json::Value,String>{
+        use serde_json::Value as J;
+        Ok(match self {
+            Self::Null=>J::Null,Self::Int(v)=>J::Number((*v).into()),Self::JsonNumber(v)=>J::Number(v.clone()),
+            Self::Bool(v)=>J::Bool(*v),Self::String(v)=>J::String(v.clone()),
+            Self::List(v)=>J::Array(v.iter().map(Self::to_json).collect::<Result<_,_>>()?),
+            Self::Dict(v)=>J::Object(v.iter().map(|(k,v)|Ok((k.clone(),v.to_json()?))).collect::<Result<_,String>>()?),
+            _=>return Err("value is not JSON data".into())
+        })
+    }
+}
+impl SignalRouter {
+    fn data_variant(&self,name:&str,fields:Vec<RuntimeValue>)->Result<RuntimeValue,EvaluationFailure>{
+        let registry=self.constructors.lock().expect("constructor registry lock poisoned");
+        let c=registry.entries.get(name).ok_or(EvaluationFailure::Invalid)?;
+        if c.fields.len()!=fields.len(){return Err(EvaluationFailure::Invalid);}
+        Ok(RuntimeValue::Enum{enum_name:c.owner.clone(),variant:c.variant.clone(),fields})
+    }
+    fn option_value(&self,value:Option<RuntimeValue>)->Result<RuntimeValue,EvaluationFailure>{
+        match value{Some(v)=>self.data_variant("option.Option.Some",vec![v]),None=>self.data_variant("option.Option.None",vec![])}
+    }
+    fn result_value(&self,value:Result<RuntimeValue,String>)->Result<RuntimeValue,EvaluationFailure>{
+        match value{Ok(v)=>self.data_variant("result.Result.Ok",vec![v]),Err(e)=>self.data_variant("result.Result.Err",vec![RuntimeValue::String(e)])}
+    }
+    fn evaluate_data_function(&self,name:&str,args:&[RuntimeValue])->Result<RuntimeValue,EvaluationFailure>{
+        use RuntimeValue as V;
+        let value=match (name,args) {
+            ("dict.empty",[])=>V::Dict(BTreeMap::new()),
+            ("dict.get",[V::Dict(d),V::String(k)])=>return self.option_value(d.get(k).cloned()),
+            ("dict.set",[V::Dict(d),V::String(k),v])=>{let mut d=d.clone();d.insert(k.clone(),v.clone());V::Dict(d)},
+            ("dict.remove",[V::Dict(d),V::String(k)])=>{let mut d=d.clone();d.remove(k);V::Dict(d)},
+            ("dict.has",[V::Dict(d),V::String(k)])=>V::Bool(d.contains_key(k)),
+            ("dict.keys",[V::Dict(d)])=>V::List(d.keys().cloned().map(V::String).collect()),
+            ("dict.values",[V::Dict(d)])=>V::List(d.values().cloned().collect()),
+            ("dict.len",[V::Dict(d)])=>V::Int(d.len().try_into().map_err(|_|EvaluationFailure::Invalid)?),
+            ("json.parse"|"json.parse_dict",[V::String(text)])=>{
+                let parsed=serde_json::from_str::<serde_json::Value>(text).map_err(|e|e.to_string()).and_then(|v|{
+                    if name=="json.parse_dict" && !v.is_object(){Err("expected a JSON object".into())}else{Ok(V::from_json(v))}
+                });
+                return self.result_value(parsed);
+            },
+            ("json.stringify",[v])=>return self.result_value(v.to_json().and_then(|v|serde_json::to_string(&v).map(V::String).map_err(|e|e.to_string()))),
+            ("json.as_dict",[v])=>return self.option_value(if matches!(v,V::Dict(_)){Some(v.clone())}else{None}),
+            ("json.as_array",[v])=>return self.option_value(if matches!(v,V::List(_)){Some(v.clone())}else{None}),
+            ("json.as_string",[v])=>return self.option_value(if matches!(v,V::String(_)){Some(v.clone())}else{None}),
+            ("json.as_int",[v])=>return self.option_value(if matches!(v,V::Int(_)){Some(v.clone())}else{None}),
+            ("json.as_bool",[v])=>return self.option_value(if matches!(v,V::Bool(_)){Some(v.clone())}else{None}),
+            ("json.is_null",[v])=>V::Bool(matches!(v,V::Null)),
+            ("json.null",[])=>V::Null,
+            _=>return Err(EvaluationFailure::Invalid)
+        };Ok(value)
     }
 }

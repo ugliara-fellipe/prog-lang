@@ -1,0 +1,33 @@
+import std
+import option
+import result
+
+type Maybe<T> = Present(T) | Absent
+func safe_divide(a: Int, b: Int) -> Result[Int, String] {
+    match b == 0 {
+        True => Err("division by zero"),
+        False => Ok(a / b)
+    }
+}
+func positive(n: Int) -> Option[Int] {
+    match n > 0 { True => Some(n), False => None }
+}
+routine Worker(value: Option[Int]) {
+    match value { Some(n) => std.log("worker", n), None => std.log("worker empty") }
+}
+routine main() {
+    let value: Option[Int] = Some(4)
+    let empty: Option[Int] = None
+    let offset = 3
+    let mapped = option.map(value, |x: Int| -> Int { x + offset })
+    std.log("option", option.unwrap_or(mapped, 0), option.is_none(empty))
+    std.log("lazy", option.unwrap_or_else(empty, || -> Int { 9 }))
+    std.log("bound", option.unwrap_or(option.and_then(value, positive), 0))
+    let success = safe_divide(8, 2)
+    let failure = safe_divide(8, 0)
+    std.log("result", result.unwrap_or(success, 0), result.is_err(failure))
+    std.log("fallback", result.unwrap_or_else(failure, |reason: String| -> Int { 12 }))
+    let own: Maybe[String] = Present("custom")
+    match own { Present(text) => std.log(text), Absent => std.log("absent") }
+    spawn Worker(mapped)
+}

@@ -60,6 +60,7 @@ impl PackageManager {
         let local = self.local_declarations.get(pkg_name).cloned().unwrap_or_default();
 
         let selected: HashSet<String> = match &imp.kind {
+            ImportKind::All if crate::stdlib::bundled_package(pkg_name).is_some() => pkg_prog.declarations.iter().filter_map(|d|if matches!(d,TopLevelDecl::Type(_)){Self::decl_name(d)}else{None}).map(str::to_owned).collect(),
             ImportKind::All => pkg_prog.declarations.iter().filter_map(Self::decl_name).map(str::to_owned).collect(),
             ImportKind::Single(name) => [name.clone()].into_iter().collect(),
             ImportKind::Items(names) => names.iter().cloned().collect(),
@@ -97,7 +98,7 @@ impl PackageManager {
                 match &mut alias {
                     TopLevelDecl::Func(f) => {
                         f.name = name.into();
-                        if pkg_name == "std" {
+                        if pkg_name == "std" || crate::stdlib::is_bundled_native_function(&names[name]) {
                             f.body = vec![Statement::ExprStmt(Expr::FunctionCall {
                                 name: names[name].clone(),
                                 args: f.params.iter().map(|p| Expr::Variable(p.name.clone())).collect(),
@@ -130,8 +131,10 @@ impl PackageManager {
             Expr::FunctionCall { name, args } => { if !bound.contains(name) { if let Some(full) = names.get(name) { *name = full.clone(); } } for arg in args { Self::qualify_expr(arg, names, bound); } }
             Expr::IndirectCall { target, args } => { Self::qualify_expr(target, names, bound); for arg in args { Self::qualify_expr(arg, names, bound); } }
             Expr::BinaryOp { left, right, .. } => { Self::qualify_expr(left, names, bound); Self::qualify_expr(right, names, bound); }
-            Expr::MemberAccess { target, .. } | Expr::Specialize { target, .. } | Expr::RefCreate(target) => Self::qualify_expr(target, names, bound),
+            Expr::MemberAccess { target, .. } | Expr::Specialize { target, .. } | Expr::RefCreate(target) | Expr::TailCall(target) => Self::qualify_expr(target, names, bound),
             Expr::ListLiteral(items) => for item in items { Self::qualify_expr(item, names, bound); },
+            Expr::DictLiteral(items)=>for (_,v) in items{Self::qualify_expr(v,names,bound);},
+            Expr::Index{target,key}=>{Self::qualify_expr(target,names,bound);Self::qualify_expr(key,names,bound);},
             _ => {}
         }
     }
@@ -151,9 +154,11 @@ impl PackageManager {
         match expr{
             Expr::Closure{params,return_type,body}=>{for p in params{Self::qualify_type(&mut p.param_type,names);}Self::qualify_type(return_type,names);Self::qualify_body_types(body,names);},
             Expr::FunctionCall{args,..}|Expr::ListLiteral(args)=>for arg in args{Self::qualify_expr_types(arg,names);},
+            Expr::DictLiteral(items)=>for (_,v) in items{Self::qualify_expr_types(v,names);},
+            Expr::Index{target,key}=>{Self::qualify_expr_types(target,names);Self::qualify_expr_types(key,names);},
             Expr::IndirectCall{target,args}=>{Self::qualify_expr_types(target,names);for arg in args{Self::qualify_expr_types(arg,names);}},
             Expr::Specialize{target,type_args}=>{for t in type_args{Self::qualify_type(t,names);}Self::qualify_expr_types(target,names);},
-            Expr::RefCreate(t)|Expr::MemberAccess{target:t,..}=>Self::qualify_expr_types(t,names),
+            Expr::RefCreate(t)|Expr::TailCall(t)|Expr::MemberAccess{target:t,..}=>Self::qualify_expr_types(t,names),
             Expr::BinaryOp{left,right,..}=>{Self::qualify_expr_types(left,names);Self::qualify_expr_types(right,names);},_=>{}
         }
     }
@@ -211,14 +216,10 @@ impl PackageManager {
 
         self.loading_stack.insert(pkg_name.to_string());
 
-        let pkg_file = self.find_package_file(pkg_name)?;
-        let source = fs::read_to_string(&pkg_file).map_err(|e| {
-            SemanticError::PackageError(format!(
-                "Failed to read package file '{}': {}",
-                pkg_file.display(),
-                e
-            ))
-        })?;
+        let source = if let Some(source)=crate::stdlib::bundled_package(pkg_name) {source.to_owned()} else {
+            let pkg_file=self.find_package_file(pkg_name)?;
+            fs::read_to_string(&pkg_file).map_err(|e|SemanticError::PackageError(format!("Failed to read package file '{}': {}",pkg_file.display(),e)))?
+        };
 
         let mut parser = Parser::new(&source).map_err(|e| {
             SemanticError::PackageError(format!(

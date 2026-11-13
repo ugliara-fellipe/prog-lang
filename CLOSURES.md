@@ -79,4 +79,7 @@ da execução. Falhas de avaliação permanecem distintas de exceções lançada
 Inferência de parâmetros sem anotações, captura por referência, auto-recursão
 anônima e bounds genéricos não fazem parte desta sintaxe.
 
+As chamadas em posição de retorno também utilizam o trampolim de
+[TAILCALL.md](TAILCALL.md), incluindo `tailcall` explícito nos corpos.
+
 Exemplo completo: [18_closures.lia](programs/18_closures.lia).

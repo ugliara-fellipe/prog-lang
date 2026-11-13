@@ -1,0 +1,35 @@
+import std
+import dict
+import json
+import option
+import result
+
+func lookup<T>(values: Dict[T], key: String) -> Option[T] { values[key] }
+routine Worker(values: Dict[Int]) {
+    std.log("worker", option.unwrap_or(values["count"], 0))
+}
+routine main() {
+    let original: Dict[Int] = {count: 3}
+    let changed = dict.set(original, "count", 8)
+    std.log("copy", option.unwrap_or(original["count"], 0), option.unwrap_or(lookup(changed, "count"), 0))
+    std.log("missing", option.is_none(changed["missing"]), dict.len(dict.remove(changed, "count")))
+    let captured = || -> Int { option.unwrap_or(original["count"], 0) }
+    let original: Dict[Int] = {count: 99}
+    std.log("capture", captured())
+    let callbacks = {next: |n: Int| -> Int { n + 1 }}
+    match callbacks["next"] { Some(f) => std.log("callback", f(4)), None => std.log("missing callback") }
+    let data: Dict[Json] = {name: "Lia", count: 2, active: True, nested: {items: [1, 2]}, absent: json.null()}
+    match json.stringify(data) {
+        Ok(text) => { match json.parse_dict(text) {
+            Ok(decoded) => {
+                std.log("json", dict.len(decoded), json.as_string(option.unwrap_or(decoded["name"], json.null())))
+                std.log("null", json.is_null(option.unwrap_or(decoded["absent"], json.null())))
+            },
+            Err(reason) => std.log(reason)
+        } },
+        Err(reason) => std.log(reason)
+    }
+    std.log("invalid", result.is_err(json.parse("{")))
+    for key in {b: 2, a: 1} { std.log("key", key) }
+    spawn Worker(changed)
+}

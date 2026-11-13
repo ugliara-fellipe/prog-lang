@@ -245,7 +245,7 @@ impl ComplexityAnalyzer {
 
     fn destination_cost(&self, targets: &std::collections::HashSet<String>) -> Complexity {
         targets.iter().filter(|name| self.ignored_function.as_ref() != Some(*name))
-            .map(|name| self.cache.get(name).cloned().unwrap_or(Complexity::Constant))
+            .map(|name| if crate::stdlib::is_bundled_native_function(name){Complexity::Polynomial(1)}else{self.cache.get(name).cloned().unwrap_or(Complexity::Constant)})
             .fold(Complexity::Constant, |cost, target| cost.max(&target))
     }
 
@@ -271,8 +271,10 @@ impl ComplexityAnalyzer {
                 l.max(&r)
             }
             Expr::MemberAccess { target, .. } | Expr::Specialize { target, .. } => self.complexity_of_expr(target, recursive),
-            Expr::RefCreate(inner) => self.complexity_of_expr(inner, recursive),
+            Expr::RefCreate(inner) | Expr::TailCall(inner) => self.complexity_of_expr(inner, recursive),
             Expr::ListLiteral(items) => items.iter().map(|item| self.complexity_of_expr(item, recursive)).fold(Complexity::Constant, |cost, item| cost.max(&item)),
+            Expr::DictLiteral(items)=>items.iter().map(|(_,v)|self.complexity_of_expr(v,recursive)).fold(Complexity::Constant,|a,b|a.max(&b)),
+            Expr::Index{target,key}=>Complexity::Polynomial(1).max(&self.complexity_of_expr(target,recursive)).max(&self.complexity_of_expr(key,recursive)),
             // Literals and plain variable reads are O(1).
             _ => Complexity::Constant,
         }

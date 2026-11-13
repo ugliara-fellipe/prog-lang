@@ -77,7 +77,9 @@ revalidados antes da execução.
 
 Não há representação numérica implícita, conversões entre enums distintos,
 payloads com nomes de campo ou guards de padrão nesta sintaxe. Enums permitem
-definir tipos opcionais e resultados próprios; não introduzem aliases de tipo
-nem tipos opcionais implícitos na biblioteca padrão.
+definir tipos opcionais e resultados próprios. A sintaxe de soma
+`type Maybe<T> = Some(T) | None` e os módulos explícitos `option` e `result`
+estão descritos em [OPCIONAIS.md](OPCIONAIS.md); não há conversão implícita
+entre presença, ausência e valores comuns.
 
 Exemplo executável: [17_enums.lia](programs/17_enums.lia).

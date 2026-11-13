@@ -1,0 +1,30 @@
+import std
+func sum_tail(items: List[Int], acc: Int) -> Int {
+    match items {
+        Nil => acc,
+        Cons(head, tail) => tailcall sum_tail(tail, acc + head)
+    }
+}
+// Calls in tail position are optimized even without the annotation.
+func count<T>(items: List[T], acc: Int) -> Int {
+    match items { Nil => acc, Cons(_, tail) => count<T>(tail, acc + 1) }
+}
+func apply(f: (Int) -> Int, x: Int) -> Int { tailcall f(x) }
+func shifted(base: Int) -> (Int) -> Int {
+    |x: Int| -> Int { tailcall apply(|n: Int| -> Int { base + n }, x) }
+}
+func fail(n: Int) -> Int { throw n }
+func guarded(items: List[Int], acc: Int) -> Int {
+    try {
+        match items {
+            Nil => tailcall fail(acc),
+            Cons(_, tail) => tailcall guarded(tail, acc + 1)
+        }
+    } catch error { acc }
+}
+routine main() {
+    std.log("sum", sum_tail([1, 2, 3, 4, 5], 0))
+    std.log("count", count<String>(["a", "b"], 0))
+    std.log("closure", shifted(4)(3))
+    std.log("handled", guarded([0, 0, 0], 0))
+}

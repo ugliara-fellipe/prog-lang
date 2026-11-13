@@ -256,7 +256,7 @@ impl TerminationChecker {
                 Self::check_routine_expr_termination(left, routine_name, sub_components)?;
                 Self::check_routine_expr_termination(right, routine_name, sub_components)?;
             }
-            Expr::RefCreate(inner) => {
+            Expr::RefCreate(inner) | Expr::TailCall(inner) => {
                 Self::check_routine_expr_termination(inner, routine_name, sub_components)?;
             }
             Expr::MemberAccess { target, .. } | Expr::Specialize { target, .. } => {
@@ -265,6 +265,8 @@ impl TerminationChecker {
             Expr::ListLiteral(items) => {
                 for item in items { Self::check_routine_expr_termination(item, routine_name, sub_components)?; }
             }
+            Expr::DictLiteral(items)=>for (_,v) in items{Self::check_routine_expr_termination(v,routine_name,sub_components)?;},
+            Expr::Index{target,key}=>{Self::check_routine_expr_termination(target,routine_name,sub_components)?;Self::check_routine_expr_termination(key,routine_name,sub_components)?;},
             _ => {}
         }
         Ok(())
@@ -380,7 +382,7 @@ impl TerminationChecker {
                 Self::check_expr_termination(left, func_name, sub_components)?;
                 Self::check_expr_termination(right, func_name, sub_components)?;
             }
-            Expr::RefCreate(inner) => {
+            Expr::RefCreate(inner) | Expr::TailCall(inner) => {
                 Self::check_expr_termination(inner, func_name, sub_components)?;
             }
             Expr::MemberAccess { target, .. } | Expr::Specialize { target, .. } => {
@@ -389,6 +391,8 @@ impl TerminationChecker {
             Expr::ListLiteral(items) => {
                 for item in items { Self::check_expr_termination(item, func_name, sub_components)?; }
             }
+            Expr::DictLiteral(items)=>for (_,v) in items{Self::check_expr_termination(v,func_name,sub_components)?;},
+            Expr::Index{target,key}=>{Self::check_expr_termination(target,func_name,sub_components)?;Self::check_expr_termination(key,func_name,sub_components)?;},
             _ => {}
         }
         Ok(())

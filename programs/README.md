@@ -29,6 +29,9 @@ This directory contains a suite of programs written in **Lia** (`.lia`), designe
 | [`16_generics.lia`](16_generics.lia) | Generic functions, recursive map, specialized callbacks, and generic routine arguments. |
 | [`17_enums.lia`](17_enums.lia) | Generic and recursive enum values, exhaustive matching, and copied enum arguments in spawn. |
 | [`18_closures.lia`](18_closures.lia) | Copied closure environments, snapshots, returned and nested closures, composition, enum payloads, and spawn. |
+| [`19_option_result.lia`](19_option_result.lia) | Optional and error values, generic sum definitions, mapping, lazy fallback, and copied actor arguments. |
+| [`20_tailcalls.lia`](20_tailcalls.lia) | Tail-recursive accumulators, implicit generic TCO, closure callbacks, and preserved exception handlers. |
+| [`21_dictionary_json.lia`](21_dictionary_json.lia) | Typed dictionaries, safe lookup, value copies, callback payloads, and JSON round trips. |
 | [`math.lia`](math.lia) and [`std.lia`](std.lia) | Libraries: they have no `main` and become available only through explicit imports. |
 
 ---

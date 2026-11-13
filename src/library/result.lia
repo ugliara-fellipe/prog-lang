@@ -1,0 +1,23 @@
+// Bundled ordinary Lia code. Import explicitly with `import result`.
+type Result<T, E> = Ok(T) | Err(E)
+func is_ok<T, E>(value: Result[T, E]) -> Bool {
+    match value { Ok(_) => True, Err(_) => False }
+}
+func is_err<T, E>(value: Result[T, E]) -> Bool {
+    match value { Ok(_) => False, Err(_) => True }
+}
+func unwrap_or<T, E>(value: Result[T, E], fallback: T) -> T {
+    match value { Ok(x) => x, Err(_) => fallback }
+}
+func unwrap_or_else<T, E>(value: Result[T, E], fallback: (E) -> T) -> T {
+    match value { Ok(x) => x, Err(e) => fallback(e) }
+}
+func map<T, U, E>(value: Result[T, E], f: (T) -> U) -> Result[U, E] {
+    match value { Ok(x) => Ok<U, E>(f(x)), Err(e) => Err<U, E>(e) }
+}
+func map_err<T, E, F>(value: Result[T, E], f: (E) -> F) -> Result[T, F] {
+    match value { Ok(x) => Ok<T, F>(x), Err(e) => Err<T, F>(f(e)) }
+}
+func and_then<T, U, E>(value: Result[T, E], f: (T) -> Result[U, E]) -> Result[U, E] {
+    match value { Ok(x) => f(x), Err(e) => Err<U, E>(e) }
+}

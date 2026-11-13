@@ -2,16 +2,6 @@
 
 A numeração original foi mantida para preservar as referências entre documentos.
 
-## 8. Tipos opcionais / Result
-
-**Explanation:** Representam ausência ou erro de forma segura, sem `null`.
-**Example:** `type Maybe<T> = Some(T) | None`
-
-## 9. Tail‑call optimization (TCO)
-
-**Explanation:** Garante recursões estruturais sem consumo de pilha.
-**Example:** `func fact(n: Int, acc: Int) -> Int { if n == 0 { acc } else { tailcall fact(n-1, n*acc) } }`
-
 ## 11. Constantes de tempo de compilação
 
 **Explanation:** Valores avaliados em compile‑time para limites de loops ou tamanhos de arena.
@@ -47,6 +37,6 @@ A numeração original foi mantida para preservar as referências entre document
 **Explanation:** Execução interativa de rotinas isoladas. A execução de arquivos pelo CLI já está disponível.
 **Example:** `> let x = 5`
 
-## 18. Completar a referência de sintaxe
+## 19. Completar a referência de sintaxe
 
 **Explanation:** Já existem uma visão geral em [README.md](README.md) e o [guia no site](docs/guia.html). Falta consolidar uma referência em Markdown com exemplos de cada estrutura e atualizar o guia para cobrir funções de ordem superior.

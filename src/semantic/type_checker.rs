@@ -62,6 +62,7 @@ impl TypeChecker {
 
     /// Entry point for the whole program.
     pub fn check_program(&mut self, program: &Program) -> Result<(), SemanticError> {
+        crate::semantic::tail_calls::validate_program(program)?;
         self.symbol_table.clear();
         self.functions.clear();
         self.routines.clear();
@@ -73,7 +74,7 @@ impl TypeChecker {
         // file, while rejecting duplicate names before runtime startup.
         for decl in &program.declarations {
             if let TopLevelDecl::Type(ty) = decl {
-                if matches!(ty.name.as_str(),"Int"|"Bool"|"String"|"List"|"Ref"|"Unknown"|"Unit") || self.types.insert(ty.name.clone(),ty.clone()).is_some() {
+                if matches!(ty.name.as_str(),"Int"|"Bool"|"String"|"List"|"Dict"|"Json"|"Ref"|"Unknown"|"Unit") || self.types.insert(ty.name.clone(),ty.clone()).is_some() {
                     return Err(SemanticError::InvalidExpression(format!("duplicate or reserved type name {}",ty.name)));
                 }
             }
@@ -117,7 +118,7 @@ impl TypeChecker {
         let saved = self.symbol_table.clone();
         self.symbol_table.clear();
         for param in &func.params { self.symbol_table.insert(param.name.clone(), param.param_type.clone()); }
-        let intrinsic = func.body.is_empty() && (crate::stdlib::is_total_standard_function(&func.name)
+        let intrinsic = func.body.is_empty() && (crate::stdlib::is_bundled_native_function(&func.name) || crate::stdlib::is_total_standard_function(&func.name)
             || (self.standard_signatures && crate::stdlib::is_total_standard_function(&format!("std.{}", func.name))));
         let check = self.check_function_value_body(&func.body, if intrinsic { None } else { func.return_type.as_ref() });
         self.symbol_table = saved;
@@ -178,6 +179,7 @@ impl TypeChecker {
     fn compatible(&self, expected: &TypeSpec, actual: &TypeSpec) -> bool {
         let expected=self.constructors.normalize(expected); let actual=self.constructors.normalize(actual);
         let (expected,actual)=(&expected,&actual);
+        if matches!(expected,TypeSpec::Primitive(n) if n=="Json") {return super::json_types::is_json_type(actual);}
         if Self::contains_function_type(expected) || Self::contains_function_type(actual) { return expected == actual; }
         match (expected, actual) {
             (TypeSpec::Ref(inner), other) | (other, TypeSpec::Ref(inner)) => self.compatible(inner, other),
@@ -249,6 +251,7 @@ impl TypeChecker {
     fn expression_copyable(&self, expression: &Expr) -> bool {
         match expression {
             Expr::ListLiteral(items) => items.iter().all(|item| self.expression_copyable(item)),
+            Expr::DictLiteral(items) => items.iter().all(|(_,v)|self.expression_copyable(v)),
             _ => self.copyable(&self.infer_type(expression), &mut HashSet::new()),
         }
     }
@@ -309,7 +312,7 @@ impl TypeChecker {
     fn bind_type_parameters(&mut self, parameters: &[String]) -> Result<(), SemanticError> {
         self.type_variables.clear();
         for parameter in parameters {
-            if matches!(parameter.as_str(), "Int" | "Bool" | "String" | "Unknown" | "List" | "Ref") || self.types.contains_key(parameter) || !self.type_variables.insert(parameter.clone()) {
+            if matches!(parameter.as_str(), "Int" | "Bool" | "String" | "Unknown" | "List" | "Dict" | "Json" | "Ref") || self.types.contains_key(parameter) || !self.type_variables.insert(parameter.clone()) {
                 return Err(SemanticError::GenericTypeError(format!("duplicate or reserved type parameter {}",parameter)));
             }
         }
@@ -318,14 +321,14 @@ impl TypeChecker {
 
     fn validate_type(&self, ty: &TypeSpec) -> Result<(), SemanticError> {
         match ty {
-            TypeSpec::Primitive(name) if matches!(name.as_str(), "Int" | "String" | "Bool" | "Unit" | "Unknown") || self.type_variables.contains(name) => Ok(()),
+            TypeSpec::Primitive(name) if matches!(name.as_str(), "Int" | "String" | "Bool" | "Json" | "Unit" | "Unknown") || self.type_variables.contains(name) => Ok(()),
             TypeSpec::Primitive(name) => match self.types.get(name) {
                 Some(decl) if decl.type_params.is_empty() => Ok(()),
                 Some(_) => Err(SemanticError::GenericTypeError(format!("type {} requires type arguments",name))),
                 None => Err(SemanticError::GenericTypeError(format!("undeclared type {}",name))),
             },
             TypeSpec::Generic(name,args) => {
-                let arity=if name=="List" {1} else {self.types.get(name).ok_or_else(|| SemanticError::GenericTypeError(format!("undeclared type {}",name)))?.type_params.len()};
+                let arity=if name=="List" || name=="Dict" {1} else {self.types.get(name).ok_or_else(|| SemanticError::GenericTypeError(format!("undeclared type {}",name)))?.type_params.len()};
                 if args.len()!=arity { return Err(SemanticError::GenericTypeError(format!("type {} expects {} arguments, found {}",name,arity,args.len()))); }
                 for arg in args {self.validate_type(arg)?;} Ok(())
             }
@@ -405,6 +408,7 @@ impl TypeChecker {
         }
         match expr {
             Expr::Closure {params,return_type,body} => return self.check_closure(params,return_type,body),
+            Expr::TailCall(call)=>return self.check_expr(call,expected),
             Expr::FunctionCall {name,args} => {
                 if self.qualified_name_shadowed(name) {return Err(SemanticError::UndeclaredSymbol(name.clone()));}
                 if name.starts_with("std.") && !self.functions.contains_key(name) {return Err(SemanticError::MissingStandardLibraryImport(name.clone()));}
@@ -446,6 +450,7 @@ impl TypeChecker {
                         }
                         self.check_expr(target,None)?;
                         let receiver=self.infer_type(target);
+                        if matches!(&receiver,TypeSpec::Generic(n,_) if n=="Dict") {return Err(SemanticError::InvalidExpression("dictionary lookup uses [String] or dict.get".into()));}
                         let enum_name=match &receiver {TypeSpec::Primitive(n)|TypeSpec::Generic(n,_)=>Some(n),_=>None};
                         if enum_name.and_then(|n|self.types.get(n)).is_some_and(|t|!t.variants.is_empty()) {
                             return Err(SemanticError::InvalidExpression("enum payloads must be accessed through match patterns".into()));
@@ -461,7 +466,43 @@ impl TypeChecker {
                 if !valid {return Err(SemanticError::InvalidExpression(format!("operator {} on {:?} and {:?}",op,a,b)));}
             }
             Expr::RefCreate(inner) => {let inner_expected=match expected {Some(TypeSpec::Ref(ty))=>Some(ty.as_ref()),_=>None};return Ok(TypeSpec::Ref(Box::new(self.check_expr(inner,inner_expected)?)));}
+            Expr::DictLiteral(items) => {
+                let json=TypeSpec::Primitive("Json".into());
+                let value_type=match expected {
+                    Some(TypeSpec::Generic(n,a)) if n=="Dict" && a.len()==1=>Some(&a[0]),
+                    Some(TypeSpec::Primitive(n)) if n=="Json"=>Some(&json),
+                    _=>None
+                };
+                let mut types=Vec::new();
+                for (_,value) in items {
+                    let mut actual=self.check_expr(value,value_type)?;
+                    if value_type.is_none() && Self::contains_unknown_type(&actual) && matches!(value,Expr::ListLiteral(_)|Expr::DictLiteral(_)){actual=self.check_expr(value,Some(&json))?;}
+                    if let Some(ty)=value_type {if !self.compatible(ty,&actual){return Err(SemanticError::FunctionReturnTypeMismatch{expected:ty.clone(),actual});}}
+                    types.push(actual);
+                }
+                let ty=if let Some(t)=value_type {t.clone()} else if types.is_empty(){json}
+                    else if types.iter().all(|t|t==&types[0]) {types[0].clone()}
+                    else if types.iter().all(super::json_types::is_json_type){json}
+                    else {return Err(SemanticError::InvalidExpression("dictionary values require a common type".into()));};
+                return Ok(TypeSpec::Generic("Dict".into(),vec![ty]));
+            }
+            Expr::Index{target,key}=>{
+                let ty=self.check_expr(target,None)?;
+                let key_ty=self.check_expr(key,Some(&TypeSpec::Primitive("String".into())))?;
+                if key_ty!=TypeSpec::Primitive("String".into()){return Err(SemanticError::InvalidExpression("dictionary keys must be String".into()));}
+                if let TypeSpec::Generic(n,a)=ty {if n=="Dict" && a.len()==1 {
+                    let result=TypeSpec::Generic("option.Option".into(),a);
+                    self.validate_type(&result)?;
+                    return Ok(result);
+                }}
+                return Err(SemanticError::InvalidExpression("indexing requires Dict[T]".into()));
+            }
             Expr::ListLiteral(items) => {
+                if matches!(expected,Some(TypeSpec::Primitive(n)) if n=="Json") {
+                    let json=TypeSpec::Primitive("Json".into());
+                    for item in items {let ty=self.check_expr(item,Some(&json))?;if !self.compatible(&json,&ty){return Err(SemanticError::InvalidExpression("non-JSON list item".into()));}}
+                    return Ok(TypeSpec::Generic("List".into(),vec![json]));
+                }
                 if let Some(TypeSpec::Generic(name,args))=expected {if name=="List" && args.len()==1 {
                     for item in items {let actual=self.check_expr(item,Some(&args[0]))?;if !self.compatible(&args[0],&actual) {return Err(SemanticError::FunctionReturnTypeMismatch {expected:args[0].clone(),actual});}}
                     return Ok(expected.unwrap().clone());
@@ -519,8 +560,8 @@ impl TypeChecker {
                     let scope = self.symbol_table.clone();
                     let collection_type = self.infer_type(collection);
                     let TypeSpec::Generic(name, args) = &collection_type else { return Err(SemanticError::InvalidExpression(format!("for requires a list, found {:?}", collection_type))); };
-                    if name != "List" || args.len() != 1 { return Err(SemanticError::InvalidExpression(format!("for requires a list, found {:?}", collection_type))); }
-                    self.symbol_table.insert(var_name.clone(), args[0].clone());
+                    if !matches!(name.as_str(),"List"|"Dict") || args.len() != 1 { return Err(SemanticError::InvalidExpression(format!("for requires a list, found {:?}", collection_type))); }
+                    self.symbol_table.insert(var_name.clone(), if name=="Dict" {TypeSpec::Primitive("String".into())} else {args[0].clone()});
                     let result = self.check_function_value_body(body, None);
                     self.symbol_table = scope;
                     result?;
@@ -628,6 +669,8 @@ impl TypeChecker {
 
     fn reject_receive(expr: &Expr) -> Result<(), SemanticError> {
         match expr {
+            Expr::DictLiteral(items)=>{for (_,v) in items {Self::reject_receive(v)?;}Ok(())},
+            Expr::Index{target,key}=>{Self::reject_receive(target)?;Self::reject_receive(key)},
             Expr::Closure {body,..} => Self::validate_non_loop_body(body),
             Expr::ReceiveSignal => Err(SemanticError::ReceiveOutsideLoop),
             Expr::FunctionCall { args, .. } => {
@@ -647,13 +690,15 @@ impl TypeChecker {
                 Self::reject_receive(left)?;
                 Self::reject_receive(right)
             }
-            Expr::MemberAccess { target, .. } | Expr::RefCreate(target) | Expr::Specialize { target, .. } => Self::reject_receive(target),
+            Expr::MemberAccess { target, .. } | Expr::RefCreate(target) | Expr::TailCall(target) | Expr::Specialize { target, .. } => Self::reject_receive(target),
             _ => Ok(()),
         }
     }
 
     fn reject_memory(expr: &Expr) -> Result<(), SemanticError> {
         match expr {
+            Expr::DictLiteral(items)=>{for (_,v) in items {Self::reject_memory(v)?;}Ok(())},
+            Expr::Index{target,key}=>{Self::reject_memory(target)?;Self::reject_memory(key)},
             Expr::Closure {body,..} => Self::validate_non_loop_body(body),
             Expr::MemoryGet(_) => Err(SemanticError::MemoryOutsideLoop),
             Expr::FunctionCall { args, .. } => { for arg in args { Self::reject_memory(arg)?; } Ok(()) }
@@ -663,7 +708,7 @@ impl TypeChecker {
                 Ok(())
             }
             Expr::BinaryOp { left, right, .. } => { Self::reject_memory(left)?; Self::reject_memory(right) }
-            Expr::MemberAccess { target, .. } | Expr::RefCreate(target) | Expr::Specialize { target, .. } => Self::reject_memory(target),
+            Expr::MemberAccess { target, .. } | Expr::RefCreate(target) | Expr::TailCall(target) | Expr::Specialize { target, .. } => Self::reject_memory(target),
             Expr::ListLiteral(items) => { for item in items { Self::reject_memory(item)?; } Ok(()) }
             _ => Ok(()),
         }
@@ -785,7 +830,7 @@ impl TypeChecker {
                     }
                     expression_is_imported(target, functions)?;
                 }
-                Expr::RefCreate(target) | Expr::Specialize {target,..} => {
+                Expr::RefCreate(target) | Expr::TailCall(target) | Expr::Specialize {target,..} => {
                     expression_is_imported(target, functions)?;
                 }
                 Expr::ListLiteral(items) => {
@@ -794,6 +839,8 @@ impl TypeChecker {
                     }
                 }
                 Expr::Closure{body,..} => for stmt in body {TypeChecker::validate_standard_library_calls(stmt,functions)?;},
+                Expr::DictLiteral(items)=>for (_,v) in items {expression_is_imported(v,functions)?;},
+                Expr::Index{target,key}=>{expression_is_imported(target,functions)?;expression_is_imported(key,functions)?;},
                 Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::Variable(_) | Expr::TypeOf(_) | Expr::ReceiveSignal | Expr::MemoryGet(_) => {}
             }
             Ok(())
@@ -840,6 +887,7 @@ impl TypeChecker {
     }
     fn infer_type_inner(&self, expr: &Expr) -> TypeSpec {
         match expr {
+            Expr::DictLiteral(_) | Expr::Index{..} => self.check_expr(expr,None).unwrap_or(TypeSpec::Primitive("Unknown".into())),
             Expr::IntLiteral(_) => TypeSpec::Primitive("Int".to_string()),
             Expr::StringLiteral(_) => TypeSpec::Primitive("String".to_string()),
             Expr::Variable(name) if name == "True" || name == "False" => TypeSpec::Primitive("Bool".into()),
@@ -881,6 +929,7 @@ impl TypeChecker {
                 _ => TypeSpec::Primitive("Unknown".into()),
             },
             Expr::RefCreate(inner) => TypeSpec::Ref(Box::new(self.infer_type(inner))),
+            Expr::TailCall(call)=>self.infer_type(call),
             Expr::MemberAccess { target, field } => {
                 if let Some(name) = Self::qualified_name(expr) {
                     if let Some(func) = self.functions.get(&name).filter(|_| !self.qualified_name_shadowed(&name)) {

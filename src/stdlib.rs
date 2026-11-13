@@ -67,3 +67,14 @@ pub fn validate_standard_library(program: &Program) -> Result<(), String> {
 
     Ok(())
 }
+
+/// Bundled algebraic data types and helpers, implemented as ordinary Lia source.
+/// They are available only after an explicit import, without external files.
+pub fn bundled_package(name:&str)->Option<&'static str>{
+    match name {"option"=>Some(include_str!("library/option.lia")),"result"=>Some(include_str!("library/result.lia")),"dict"=>Some(include_str!("library/dict.lia")),"json"=>Some(include_str!("library/json.lia")),_=>None}
+}
+
+/// These finite natives never invoke callbacks; dictionary operations copy values.
+pub fn is_bundled_native_function(name:&str)->bool{
+    matches!(name,"dict.empty"|"dict.get"|"dict.set"|"dict.remove"|"dict.has"|"dict.keys"|"dict.values"|"dict.len"|"json.parse"|"json.parse_dict"|"json.stringify"|"json.as_dict"|"json.as_array"|"json.as_string"|"json.as_int"|"json.as_bool"|"json.is_null"|"json.null")
+}

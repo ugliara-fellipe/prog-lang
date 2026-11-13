@@ -1,0 +1,13 @@
+// JSON data has no callable or reference values.
+import option
+import result
+func parse(text: String) -> Result[Json, String] {}
+func parse_dict(text: String) -> Result[Dict[Json], String] {}
+func stringify(value: Json) -> Result[String, String] {}
+func as_dict(value: Json) -> Option[Dict[Json]] {}
+func as_array(value: Json) -> Option[List[Json]] {}
+func as_string(value: Json) -> Option[String] {}
+func as_int(value: Json) -> Option[Int] {}
+func as_bool(value: Json) -> Option[Bool] {}
+func is_null(value: Json) -> Bool {}
+func null() -> Json {}

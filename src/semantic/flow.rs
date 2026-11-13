@@ -38,6 +38,7 @@ pub struct FunctionFlow {
 }
 impl FunctionFlow {
     pub fn analyze(program: &Program) -> Result<Self, SemanticError> {
+        crate::semantic::tail_calls::validate_program(program)?;
         let mut solver = Solver::new(program);
         solver.solve();
         // A declaration with no incoming function values is an open entry
@@ -146,7 +147,7 @@ impl<'a> Solver<'a> {
             seen.remove(name);return value;
         }
         match ty {
-            TypeSpec::Function(_, _) => Value { targets: self.functions.iter().filter(|(_, f)| Self::signature_shape_matches(ty,type_params,&Self::signature(f),&f.type_params)).map(|(name,_)| name.clone()).chain(self.closures.iter().filter(|(_,e)|Self::signature_shape_matches(ty,type_params,&crate::semantic::closures::signature(e),&self.closure_type_variables)).map(|(name,_)|name.clone())).chain(self.constructors.entries.iter().filter(|(_,c)|Self::signature_shape_matches(ty,type_params,&c.signature(),&c.type_params)).map(|(name,_)|name.clone())).collect(), ..Value::default() },
+            TypeSpec::Function(_, _) => Value { targets: self.functions.iter().filter(|(_, f)| Self::signature_shape_matches(&normalized,type_params,&self.constructors.normalize(&Self::signature(f)),&f.type_params)).map(|(name,_)| name.clone()).chain(self.closures.iter().filter(|(_,e)|Self::signature_shape_matches(&normalized,type_params,&self.constructors.normalize(&crate::semantic::closures::signature(e)),&self.closure_type_variables)).map(|(name,_)|name.clone())).chain(self.constructors.entries.iter().filter(|(_,c)|Self::signature_shape_matches(&normalized,type_params,&c.signature(),&c.type_params)).map(|(name,_)|name.clone())).collect(), ..Value::default() },
             TypeSpec::Generic(_, args) => {
                 let mut result = Value::default();
                 for arg in args { let nested = self.candidates_inner(arg,type_params,seen); result.contents.extend(nested.targets); result.contents.extend(nested.contents); }
@@ -207,12 +208,14 @@ impl<'a> Solver<'a> {
                 let value = self.expr(owner,target,scope,false);
                 self.call(owner, expr,value,args,scope,spawn,true)
             }
+            Expr::DictLiteral(items)=>{let mut result=Value::default();for (_,item) in items{let value=self.expr(owner,item,scope,false);result.contents.extend(value.targets);result.contents.extend(value.contents);result.contents_unknown |= value.unknown || value.contents_unknown;}result},
+            Expr::Index{target,key}=>{let v=self.expr(owner,target,scope,false);self.expr(owner,key,scope,false);Value{contents:v.contents,contents_unknown:v.contents_unknown || v.unknown,..Value::default()}},
             Expr::ListLiteral(items) => {
                 let mut result = Value::default();
                 for item in items { let value = self.expr(owner,item,scope,false); result.contents.extend(value.targets); result.contents.extend(value.contents); result.contents_unknown |= value.unknown || value.contents_unknown; }
                 result
             }
-            Expr::RefCreate(inner) | Expr::Specialize { target: inner, .. } => self.expr(owner,inner,scope,false),
+            Expr::RefCreate(inner) | Expr::TailCall(inner) | Expr::Specialize { target: inner, .. } => self.expr(owner,inner,scope,false),
             Expr::MemberAccess { target, field } => {
                 if let Some(name) = Self::qualified(target) {
                     // A local receiver shadows a package qualifier. Resolving
@@ -243,7 +246,11 @@ impl<'a> Solver<'a> {
         self.changed |= before != self.flow.targets[&id].len();
         if indirect {
             self.flow.indirect.insert(id);
-            if target.unknown || target.targets.is_empty() { self.unresolved.insert(format!("{}: {:?}",crate::semantic::closures::display_name(owner),expr)); }
+            // Bottom and unknown are distinct: after the fixed point and
+            // open-parameter seeding, bottom has no inhabiting function value
+            // in this closed program. It occurs in unused generic helpers.
+            // Unknown may denote an unmodelled destination and is rejected.
+            if target.unknown { self.unresolved.insert(format!("{}: {:?}",crate::semantic::closures::display_name(owner),expr)); }
         }
         let mut result = Value::default();
         for name in &target.targets {
@@ -263,7 +270,10 @@ impl<'a> Solver<'a> {
             }
             // Only the certified qualified primitive has this transfer
             // function. A user function named `prepend` must use its body.
-            if name == "std.prepend" {
+            if crate::stdlib::is_bundled_native_function(name) {
+                if matches!(name.as_str(),"dict.get"|"dict.remove"|"dict.values"|"dict.set") {if let Some(v)=values.first(){result.merge(v);}}
+                if name=="dict.set" {if let Some(v)=values.get(2){result.contents.extend(v.targets.iter().cloned());result.contents.extend(v.contents.iter().cloned());result.contents_unknown |= v.unknown || v.contents_unknown;}}
+            } else if name == "std.prepend" {
                 if let Some(head) = values.first() { result.contents.extend(head.targets.iter().cloned()); result.contents.extend(head.contents.iter().cloned()); result.contents_unknown |= head.unknown || head.contents_unknown; }
                 if let Some(tail) = values.get(1) { result.merge(tail); }
             } else if let Some(value) = self.returns.get(name) { result.merge(value); }

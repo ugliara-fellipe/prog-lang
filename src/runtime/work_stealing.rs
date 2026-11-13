@@ -293,7 +293,7 @@ impl WorkStealingPool {
                 ExecutionControl::Continue
             }
             Statement::ForLoop { var_name, collection, body } => {
-                let RuntimeValue::List(items) = value!(collection) else { return ExecutionControl::Failure(EvaluationFailure::Invalid); };
+                let Some(items) = value!(collection).iteration_items() else { return ExecutionControl::Failure(EvaluationFailure::Invalid); };
                 for item in items {
                     let mut local_values = variable_values.clone();
                     let mut local_types = variable_types.clone();

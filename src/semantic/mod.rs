@@ -1,3 +1,5 @@
+pub mod json_types;
+pub mod tail_calls;
 pub mod closures;
 pub mod adt;
 pub mod dag;
@@ -12,6 +14,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum SemanticError {
+    #[error("Invalid tailcall: {0}")]
+    InvalidTailCall(String),
     #[error("Closure capture cannot be copied by value: {0}")]
     UncopyableCapture(String),
     #[error("Non-exhaustive match for {0}")]

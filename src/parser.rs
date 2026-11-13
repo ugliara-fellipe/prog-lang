@@ -28,6 +28,7 @@ pub enum TokenKind {
     Try,
     Catch,
     Throw,
+    TailCall,
     Terminate,
     For,
     Em,
@@ -170,6 +171,7 @@ impl<'a> Lexer<'a> {
                 "try" => TokenKind::Try,
                 "catch" => TokenKind::Catch,
                 "throw" => TokenKind::Throw,
+                "tailcall" => TokenKind::TailCall,
                 "terminate" => TokenKind::Terminate,
                 "for" => TokenKind::For,
                 "in" => TokenKind::In,
@@ -520,6 +522,17 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Type)?;
         let name = self.expect_id()?;
         let type_params = self.parse_type_params()?;
+        if self.check(&TokenKind::Assign) {
+            self.advance()?;
+            let mut variants=vec![self.parse_enum_variant()?];
+            while self.check(&TokenKind::Pipe) {
+                self.advance()?;
+                let variant=self.parse_enum_variant()?;
+                if variants.iter().any(|v|v.name==variant.name){return Err(ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:format!("duplicate variant {}",variant.name)});}
+                variants.push(variant);
+            }
+            return Ok(TypeDecl{name,type_params,fields:vec![],variants});
+        }
         self.expect(TokenKind::LBrace)?;
 
         let mut fields = Vec::new();
@@ -549,22 +562,26 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace)?;
         let mut variants=Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
-            let variant=self.expect_id()?;
-            if matches!(variant.as_str(),"True"|"False"|"Nil"|"Cons") || !variant.chars().next().is_some_and(char::is_uppercase) || variants.iter().any(|v: &EnumVariant|v.name==variant) {
-                return Err(ParseError::SyntaxError {line:self.current.line,col:self.current.col,message:"enum variants must have distinct capitalized names".into()});
-            }
-            let mut fields=Vec::new();
-            if self.check(&TokenKind::LParen) {
-                self.advance()?;
-                while !self.check(&TokenKind::RParen) { fields.push(self.parse_type_spec()?); if !self.check(&TokenKind::Comma) {break;} self.advance()?; }
-                self.expect(TokenKind::RParen)?;
-            }
-            variants.push(EnumVariant {name:variant,fields});
+            let variant=self.parse_enum_variant()?;
+            if variants.iter().any(|v:&EnumVariant|v.name==variant.name){return Err(ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:format!("duplicate variant {}",variant.name)});}
+            variants.push(variant);
             if !self.check(&TokenKind::Comma) {break;} self.advance()?;
         }
         self.expect(TokenKind::RBrace)?;
         if variants.is_empty() {return Err(ParseError::SyntaxError {line:self.current.line,col:self.current.col,message:"enum must declare at least one variant".into()});}
         Ok(TypeDecl {name,type_params,fields:vec![],variants})
+    }
+
+    fn parse_enum_variant(&mut self)->Result<EnumVariant,ParseError>{
+        let name=self.expect_id()?;
+        if matches!(name.as_str(),"True"|"False"|"Nil"|"Cons") || !name.chars().next().is_some_and(char::is_uppercase){return Err(ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:"variant names must be capitalized and must not replace builtin constructors".into()});}
+        let mut fields=Vec::new();
+        if self.check(&TokenKind::LParen){
+            self.advance()?;
+            while !self.check(&TokenKind::RParen){fields.push(self.parse_type_spec()?);if !self.check(&TokenKind::Comma){break;}self.advance()?;}
+            self.expect(TokenKind::RParen)?;
+        }
+        Ok(EnumVariant{name,fields})
     }
 
     fn parse_func_decl(&mut self) -> Result<FuncDecl, ParseError> {
@@ -657,7 +674,11 @@ impl<'a> Parser<'a> {
             if !self.check(&TokenKind::Comma) { break; }
             self.advance()?;
         }
-        self.expect(TokenKind::Gt)?;
+        if self.check(&TokenKind::GtEq) {
+            // In a sum declaration, `Name<T>=...` closes the parameter list
+            // and starts the definition; preserve the already-lexed `=`.
+            self.current.kind=TokenKind::Assign;self.current.col+=1;
+        } else {self.expect(TokenKind::Gt)?;}
         Ok(params)
     }
 
@@ -968,7 +989,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_prefix(&mut self) -> Result<Expr, ParseError> {
-        if self.check(&TokenKind::Type) {
+        if self.check(&TokenKind::TailCall) {
+            self.advance()?;
+            let call=self.parse_postfix()?;
+            if !matches!(call,Expr::FunctionCall{..}|Expr::IndirectCall{..}) {return Err(ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:"tailcall requires a function call".into()});}
+            Ok(Expr::TailCall(Box::new(call)))
+        } else if self.check(&TokenKind::Type) {
             self.advance()?;
             Ok(Expr::TypeOf(self.expect_id()?))
         } else if self.check(&TokenKind::Ref) {
@@ -1036,6 +1062,9 @@ impl<'a> Parser<'a> {
                     }
                     target => expr = Expr::IndirectCall { target: Box::new(target), args },
                 }
+            } else if self.check(&TokenKind::LBracket) {
+                self.advance()?;let key=self.parse_expr()?;self.expect(TokenKind::RBracket)?;
+                expr=Expr::Index{target:Box::new(expr),key:Box::new(key)};
             } else if self.check(&TokenKind::Dot) {
                 // Member access
                 self.advance()?;
@@ -1079,8 +1108,20 @@ impl<'a> Parser<'a> {
         Ok(Expr::Closure{params,return_type,body})
     }
 
+    fn parse_dict_literal(&mut self)->Result<Expr,ParseError>{
+        self.expect(TokenKind::LBrace)?;let mut entries=Vec::new();
+        while !self.check(&TokenKind::RBrace){
+            let key=match self.advance()?.kind{TokenKind::Str(s)|TokenKind::Id(s)=>s,_=>return Err(ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:"dictionary keys must be strings or identifiers".into()})};
+            if entries.iter().any(|(name,_)|name==&key){return Err(ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:format!("duplicate dictionary key {}",key)});}
+            self.expect(TokenKind::Colon)?;entries.push((key,self.parse_expr()?));
+            if !self.check(&TokenKind::Comma){break;}self.advance()?;
+        }
+        self.expect(TokenKind::RBrace)?;Ok(Expr::DictLiteral(entries))
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         match &self.current.kind {
+            TokenKind::LBrace => self.parse_dict_literal(),
             TokenKind::Pipe => self.parse_closure(),
             TokenKind::Int(val) => {
                 let v = *val;

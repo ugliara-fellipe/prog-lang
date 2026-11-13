@@ -21,8 +21,10 @@ fn free_expr(expr:&Expr,bound:&HashSet<String>,free:&mut HashSet<String>){
         Expr::IndirectCall{target,args}=>{free_expr(target,bound,free);for arg in args{free_expr(arg,bound,free);}},
         Expr::Closure{params,body,..}=>{let mut local=bound.clone();local.extend(params.iter().map(|p|p.name.clone()));free_body(body,&local,free);},
         Expr::BinaryOp{left,right,..}=>{free_expr(left,bound,free);free_expr(right,bound,free);},
-        Expr::RefCreate(t)|Expr::MemberAccess{target:t,..}|Expr::Specialize{target:t,..}=>free_expr(t,bound,free),
+        Expr::RefCreate(t)|Expr::TailCall(t)|Expr::MemberAccess{target:t,..}|Expr::Specialize{target:t,..}=>free_expr(t,bound,free),
         Expr::ListLiteral(items)=>for item in items{free_expr(item,bound,free);},
+        Expr::DictLiteral(items)=>for (_,v) in items{free_expr(v,bound,free);},
+        Expr::Index{target,key}=>{free_expr(target,bound,free);free_expr(key,bound,free);},
         _=>{}
     }
 }
@@ -46,9 +48,11 @@ pub fn collect_expr<'a>(expr:&'a Expr,found:&mut Vec<&'a Expr>){
     match expr{
         Expr::Closure{body,..}=>{found.push(expr);collect_body(body,found);},
         Expr::FunctionCall{args,..}|Expr::ListLiteral(args)=>for arg in args{collect_expr(arg,found);},
+        Expr::DictLiteral(items)=>for (_,v) in items{collect_expr(v,found);},
+        Expr::Index{target,key}=>{collect_expr(target,found);collect_expr(key,found);},
         Expr::IndirectCall{target,args}=>{collect_expr(target,found);for arg in args{collect_expr(arg,found);}},
         Expr::BinaryOp{left,right,..}=>{collect_expr(left,found);collect_expr(right,found);},
-        Expr::RefCreate(t)|Expr::Specialize{target:t,..}|Expr::MemberAccess{target:t,..}=>collect_expr(t,found),_=>{}
+        Expr::RefCreate(t)|Expr::TailCall(t)|Expr::Specialize{target:t,..}|Expr::MemberAccess{target:t,..}=>collect_expr(t,found),_=>{}
     }
 }
 fn collect_body<'a>(body:&'a [Statement],found:&mut Vec<&'a Expr>){

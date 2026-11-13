@@ -25,7 +25,8 @@ topLevelDecl
     ;
 
 typeDecl
-    : 'type' ID typeParams? '{' structField (',' structField)* ','? '}'
+    : 'type' ID typeParams? ('{' structField (',' structField)* ','? '}'
+                          | '=' enumVariant ('|' enumVariant)*)
     ;
 
 enumDecl
@@ -173,9 +174,11 @@ expr
     | 'message'                                            # MessageExpr
     | 'memory' ID                                          # MemoryExpr
     | 'ref' expr                                           # RefExpr
+    | 'tailcall' expr                                      # TailCallExpr
     | 'type' ID                                            # TypeOfExpr
     | expr '(' argList? ')'                                # CallExpr
     | expr '<' typeSpec (',' typeSpec)* '>'                  # SpecializeExpr
+    | expr '[' expr ']'                                    # IndexExpr
     | expr '.' ID                                          # MemberAccessExpr
     | expr op=('*' | '/') expr                             # MulDivExpr
     | expr op=('+' | '-') expr                             # AddSubExpr
@@ -197,10 +200,15 @@ primary
     | STRING
     | '(' expr ')'
     | listLiteral
+    | dictLiteral
     ;
 
 listLiteral
     : '[' (expr (',' expr)* ','?)? ']'
+    ;
+
+dictLiteral
+    : '{' ((STRING | ID) ':' expr (',' (STRING | ID) ':' expr)* ','?)? '}'
     ;
 
 // ==========================================
@@ -219,6 +227,7 @@ SIGNAL_KW  : 'signal' ;
 TRY_KW     : 'try' ;
 CATCH_KW   : 'catch' ;
 THROW_KW   : 'throw' ;
+TAILCALL_KW : 'tailcall' ;
 LOOP_KW    : 'loop' ;
 TERMINATE_KW : 'terminate' ;
 FOR_KW     : 'for' ;
