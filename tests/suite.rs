@@ -208,6 +208,16 @@ fn test_executable_examples_dispatch_their_main_routines() {
     }
 }
 
+#[test]
+fn test_type_expression_reports_local_and_function_parameter_types() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lia"))
+        .arg("programs/14_type_of.lia")
+        .output()
+        .expect("run type example");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Int String List[Int] Int"));
+}
+
 /// The real executable must dispatch only `main`, wait for its spawned work,
 /// and then exit without running unrelated routine declarations.
 #[test]
@@ -567,7 +577,7 @@ fn test_loop_iteration_termination_is_proven_independently_of_requeueing() {
     // individual execution remains finite and is therefore valid.
     let valid_persistent_loop = r#"
 loop Daemon() {
-    log(receive.value)
+    log(message.value)
 }
 "#;
     assert!(compile_and_validate(valid_persistent_loop).is_ok());
@@ -719,7 +729,7 @@ fn test_each_loop_iteration_gets_next_signal_or_none_when_queue_is_empty() {
 fn test_receive_is_reserved_for_loop_iterations() {
     let code = r#"
 routine Invalid() {
-    log(receive.value)
+    log(message.value)
 }
 
 "#;

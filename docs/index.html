@@ -43,7 +43,7 @@
 }
 
 <span class="code-keyword">loop</span> <span class="code-name">Inbox</span>() {
-  std.log(receive.value)
+  std.log(message.value)
   <span class="code-keyword">terminate</span>
 }</code></pre>
           <p class="terminal-note"><span class="status-dot"></span> Uma entrada. Uma instância nomeada de loop.</p>
@@ -154,7 +154,7 @@
 }
 
 <span class="code-keyword">loop</span> <span class="code-name">Inbox</span>() {
-  std.log(receive.value, receive.pending)
+  std.log(message.value, message.pending)
   <span class="code-keyword">terminate</span>
 }</code></pre>
           </div>
@@ -163,8 +163,8 @@
 <span class="code-keyword">spawn</span> <span class="code-name">Inbox</span>()
 
 <span class="code-comment">// Primeira iteração:</span>
-receive.value   <span class="code-comment">// None</span>
-receive.pending <span class="code-comment">// 0</span></code></pre>
+message.value   <span class="code-comment">// None</span>
+message.pending <span class="code-comment">// 0</span></code></pre>
           </div>
         </div>
       </section>
@@ -176,7 +176,7 @@ receive.pending <span class="code-comment">// 0</span></code></pre>
         </div>
         <div class="example-grid">
           <article><span class="example-tag">Entrada</span><h3>Hello world</h3><p><code>main</code> inicia uma rotina e imprime uma mensagem usando a biblioteca padrão explícita.</p><code>programs/00_hello_world.lia</code></article>
-          <article><span class="example-tag">Sinais</span><h3>Caixa de entrada</h3><p>Uma rotina inicia um loop, o loop recebe um valor por <code>receive.value</code> e encerra sua iteração.</p><code>programs/09_loop_signals.lia</code></article>
+          <article><span class="example-tag">Sinais</span><h3>Caixa de entrada</h3><p>Uma rotina inicia um loop, o loop recebe um valor por <code>message.value</code> e encerra sua iteração.</p><code>programs/09_loop_signals.lia</code></article>
           <article><span class="example-tag">Bibliotecas</span><h3>Importação</h3><p>Um programa importa funções de uma biblioteca e calcula resultados sem executar a biblioteca por conta própria.</p><code>programs/13_library_consumer.lia</code></article>
         </div>
       </section>

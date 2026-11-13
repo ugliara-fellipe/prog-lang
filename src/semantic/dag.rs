@@ -89,6 +89,7 @@ impl CallGraphValidator {
             Statement::VarDecl { value, .. } => {
                 self.collect_calls_from_expr(value, callees);
             }
+            Statement::MemorySet { value, .. } => self.collect_calls_from_expr(value, callees),
             Statement::ForLoop { collection, body, .. } => {
                 self.collect_calls_from_expr(collection, callees);
                 for s in body {
@@ -150,6 +151,7 @@ impl CallGraphValidator {
                     }
                 }
             }
+            Statement::MemorySet { value, .. } => self.collect_calls_from_expr(value, callees),
             Statement::Signal { payload, .. } => {
                 self.collect_func_calls_from_routine_expr(payload, routine_names, callees);
             }

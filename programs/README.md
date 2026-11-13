@@ -19,7 +19,7 @@ This directory contains a suite of programs written in **Lia** (`.lia`), designe
 | [`06_full_pipeline.lia`](06_full_pipeline.lia) | Full end-to-end integration: recursive inductive data structs, pure recursive functions, concurrent actor routines, routine-local Arena, pattern matching, and recursive subtask spawns. |
 | [`07_packages_and_imports.lia`](07_packages_and_imports.lia) | Executable package-import example: whole package import (`import math`), specific item imports (`import math.{Vector2D, multiply}`), explicit `std` import, and cross-module function calls. |
 | [`08_persistent_loop.lia`](08_persistent_loop.lia) | Executable one-iteration persistent-loop example. |
-| [`09_loop_signals.lia`](09_loop_signals.lia) | Executable signal producer/consumer example with `receive.value` and `receive.pending`. |
+| [`09_loop_signals.lia`](09_loop_signals.lia) | Executable signal producer/consumer example with `message.value` and `message.pending`. |
 | [`10_exceptions.lia`](10_exceptions.lia) | Executable exception-boundary example with functions, routines, and loops. |
 | [`11_search_and_sort.lia`](11_search_and_sort.lia) | Executable recursive algorithms using explicit certified `std` primitives. |
 | [`12_main_entry.lia`](12_main_entry.lia) | Executable entry-point example; only `main` is dispatched automatically. |

@@ -34,6 +34,7 @@ pub enum TokenKind {
     Match,
     Ref,
     Receive,
+    Memory,
     List,
     // Symbols
     LParen,
@@ -171,7 +172,8 @@ impl<'a> Lexer<'a> {
                 "em" => TokenKind::Em,
                 "match" => TokenKind::Match,
                 "ref" => TokenKind::Ref,
-                "receive" => TokenKind::Receive,
+                "message" => TokenKind::Receive,
+                "memory" => TokenKind::Memory,
                 "List" => TokenKind::List,
                 _ => TokenKind::Id(ident),
             };
@@ -622,7 +624,7 @@ impl<'a> Parser<'a> {
             return Err(ParseError::SyntaxError {
                 line: self.current.line,
                 col: self.current.col,
-                message: "Loops cannot declare parameters; use `receive` for signal values".to_string(),
+                message: "Loops cannot declare parameters; use `message` for signal values".to_string(),
             });
         }
         self.expect(TokenKind::RParen)?;
@@ -672,6 +674,7 @@ impl<'a> Parser<'a> {
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match self.current.kind {
             TokenKind::Let => self.parse_var_decl(),
+            TokenKind::Memory => self.parse_memory(),
             TokenKind::Spawn => self.parse_spawn(),
             TokenKind::Signal => self.parse_signal(),
             TokenKind::Throw => self.parse_throw(),
@@ -715,6 +718,14 @@ impl<'a> Parser<'a> {
             type_annot,
             value,
         })
+    }
+
+    fn parse_memory(&mut self) -> Result<Statement, ParseError> {
+        self.expect(TokenKind::Memory)?;
+        let name = self.expect_id()?;
+        self.expect(TokenKind::Assign)?;
+        let value = self.parse_expr()?;
+        Ok(Statement::MemorySet { name, value })
     }
 
     fn parse_spawn(&mut self) -> Result<Statement, ParseError> {
@@ -899,7 +910,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_prefix(&mut self) -> Result<Expr, ParseError> {
-        if self.check(&TokenKind::Ref) {
+        if self.check(&TokenKind::Type) {
+            self.advance()?;
+            Ok(Expr::TypeOf(self.expect_id()?))
+        } else if self.check(&TokenKind::Ref) {
             self.advance()?;
             let inner = self.parse_prefix()?;
             Ok(Expr::RefCreate(Box::new(inner)))
@@ -990,6 +1004,10 @@ impl<'a> Parser<'a> {
             TokenKind::Receive => {
                 self.advance()?;
                 Ok(Expr::ReceiveSignal)
+            }
+            TokenKind::Memory => {
+                self.advance()?;
+                Ok(Expr::MemoryGet(self.expect_id()?))
             }
             TokenKind::LBracket => {
                 self.advance()?;

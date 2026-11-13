@@ -44,9 +44,13 @@ pub enum Expr {
     StringLiteral(String),
     ListLiteral(Vec<Expr>),
     Variable(String),
+    /// Returns the type name of a variable as a string.
+    TypeOf(String),
     /// The signal delivered to the current loop iteration. Access its fields
-    /// as `receive.value` and `receive.pending`.
+    /// as `message.value` and `message.pending`.
     ReceiveSignal,
+    /// Reads a value stored in the current persistent loop's private memory.
+    MemoryGet(String),
     RefCreate(Box<Expr>),
     FunctionCall { name: String, args: Vec<Expr> },
     MemberAccess { target: Box<Expr>, field: String },
@@ -67,6 +71,8 @@ pub enum Statement {
         type_annot: Option<TypeSpec>,
         value: Expr,
     },
+    /// Stores a value in the current persistent loop's private memory.
+    MemorySet { name: String, value: Expr },
     Spawn(Expr),
     /// Asynchronously sends a value to the named persistent loop.
     Signal { loop_name: String, payload: Expr },

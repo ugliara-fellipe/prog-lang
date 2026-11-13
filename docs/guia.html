@@ -122,14 +122,14 @@
 }
 
 <span class="code-keyword">loop</span> <span class="code-name">Inbox</span>() {
-  std.log(<span class="code-string">"recebido:"</span>, receive.value)
-  std.log(<span class="code-string">"ainda na fila:"</span>, receive.pending)
+  std.log(<span class="code-string">"recebido:"</span>, message.value)
+  std.log(<span class="code-string">"ainda na fila:"</span>, message.pending)
   <span class="code-keyword">terminate</span>
 }</code></pre>
             </figure>
             <ul class="check-list">
-              <li><span>✓</span><code>receive.value</code> contém o sinal entregue nesta iteração, ou <code>None</code> quando não há sinal.</li>
-              <li><span>✓</span><code>receive.pending</code> informa quantos sinais permanecem na fila após a entrega.</li>
+              <li><span>✓</span><code>message.value</code> contém o sinal entregue nesta iteração, ou <code>None</code> quando não há sinal.</li>
+              <li><span>✓</span><code>message.pending</code> informa quantos sinais permanecem na fila após a entrega.</li>
               <li><span>✓</span>Sem <code>terminate</code>, o loop agenda a próxima iteração depois de concluir a atual.</li>
             </ul>
           </section>

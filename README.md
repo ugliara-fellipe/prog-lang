@@ -114,6 +114,10 @@ match list {
 
 ### Persistent loops
 
+The expression `type variable` returns the variable's type name as a string,
+for example `type count` returns `"Int"` when `count` is an integer. An
+unknown type is reported as `"Unknown"`.
+
 `loop` declares a dormant persistent actor. `spawn LoopName()` starts its sole
 instance; each iteration runs on the same shared work-stealing queue as
 routines and, when its body ends, is queued again. A running loop never
@@ -137,9 +141,9 @@ signal Poller("new work")
 Loops do not declare parameters. `spawn Poller(value)` starts a dormant
 `Poller` and delivers `value`; while `Poller` is already active, the same form
 only signals it, so it continues its current execution rather than restarting.
-The loop reads the value through `receive.value`. `spawn Poller()` starts it
-without a signal, so its first `receive.value` is `None` and
-`receive.pending` is `0`.
+The loop reads the value through `message.value`. `spawn Poller()` starts it
+without a signal, so its first `message.value` is `None` and
+`message.pending` is `0`.
 
 At the end of every non-terminated iteration, the runtime schedules the next
 iteration. It receives the next queued signal in FIFO order; if the mailbox is
@@ -202,9 +206,21 @@ Loop names are unique within a program: only one active instance may use a
 given name, and a `signal` target must name one of those declared loops.
 
 Messages are appended to that loop's mailbox and one is delivered at the beginning
-of its next iteration. `receive.value` is the one message delivered to that
-iteration and `receive.pending` is the number still queued; the next iteration
+of its next iteration. `message.value` is the one message delivered to that
+iteration and `message.pending` is the number still queued; the next iteration
 receives the next value. Sending does not wait for the receiving loop.
+
+Loops can preserve values across iterations with `memory name = expression`
+and read them with `memory name`. Each loop keeps a private memory map; an
+unset name reads as `None`, and `terminate` discards that loop's memory.
+
+```lia
+loop Counter() {
+    memory checkpoint = "started"
+    std.log(memory checkpoint)
+    terminate
+}
+```
 
 See [`programs/09_loop_signals.lia`](programs/09_loop_signals.lia)
 for a routine that emits a signal and a persistent loop that consumes it.

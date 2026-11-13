@@ -31,8 +31,10 @@ pub enum SemanticError {
 
     #[error("'terminate' may only be used inside a loop")]
     TerminateOutsideLoop,
+    #[error("'memory' may only be used inside a loop")]
+    MemoryOutsideLoop,
 
-    #[error("'receive' may only be used inside a loop")]
+    #[error("'message' may only be used inside a loop")]
     ReceiveOutsideLoop,
 
     #[error("Duplicate loop declaration: '{0}'")]

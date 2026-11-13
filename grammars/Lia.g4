@@ -91,6 +91,7 @@ block
 
 statement
     : varDeclStmt
+    | memoryStmt
     | spawnStmt
     | signalStmt
     | throwStmt
@@ -103,6 +104,10 @@ statement
 
 varDeclStmt
     : 'let' 'mut'? ID (':' typeSpec)? '=' expr
+    ;
+
+memoryStmt
+    : 'memory' ID '=' expr
     ;
 
 spawnStmt
@@ -147,8 +152,10 @@ exprStmt
 
 expr
     : primary                                              # PrimaryExpr
-    | 'receive'                                            # ReceiveExpr
+    | 'message'                                            # MessageExpr
+    | 'memory' ID                                          # MemoryExpr
     | 'ref' expr                                           # RefExpr
+    | 'type' ID                                            # TypeOfExpr
     | expr '(' argList? ')'                                # CallExpr
     | expr '.' ID                                          # MemberAccessExpr
     | expr op=('*' | '/') expr                             # MulDivExpr
@@ -193,7 +200,7 @@ FOR_KW     : 'for' ;
 IN_KW      : 'in' ;
 MATCH_KW   : 'match' ;
 REF_KW     : 'ref' ;
-RECEIVE_KW : 'receive' ;
+MESSAGE_KW : 'message' ;
 LIST_KW    : 'List' ;
 
 ID         : [a-zA-Z_] [a-zA-Z0-9_]* ;

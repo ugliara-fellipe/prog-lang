@@ -10,4 +10,4 @@ func empty() -> List[Int] {}
 func prepend(value: Int, items: List[Int]) -> List[Int] {}
 // `std.log` accepts a finite list of values at a call site; this signature
 // documents its first printable value and its runtime primitive emits output.
-func log(message: String) {}
+func log(value: String) {}

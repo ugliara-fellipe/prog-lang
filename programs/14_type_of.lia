@@ -1,0 +1,12 @@
+import std
+
+func describe(value: Int) -> String {
+    type value
+}
+
+routine main() {
+    let count = 42
+    let text = "hello"
+    let numbers: List[Int] = [1, 2]
+    std.log(type count, type text, type numbers, describe(1))
+}

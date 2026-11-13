@@ -71,6 +71,7 @@ impl TerminationChecker {
         sub_components: &HashSet<String>,
     ) -> Result<(), SemanticError> {
         match stmt {
+            Statement::MemorySet { value, .. } => Self::check_expr_termination(value, func_name, sub_components)?,
             Statement::Match { cases, .. } => {
                 for case in cases {
                     let mut local_subs = sub_components.clone();
@@ -131,6 +132,7 @@ impl TerminationChecker {
         sub_components: &HashSet<String>,
     ) -> Result<(), SemanticError> {
         match stmt {
+            Statement::MemorySet { value, .. } => Self::check_expr_termination(value, routine_name, sub_components)?,
             Statement::Match { cases, .. } => {
                 for case in cases {
                     let mut local_subs = sub_components.clone();

@@ -81,17 +81,20 @@ impl TypeChecker {
     fn validate_non_loop_body(statements: &[Statement]) -> Result<(), SemanticError> {
         for statement in statements {
             match statement {
+                Statement::MemorySet { .. } => return Err(SemanticError::MemoryOutsideLoop),
                 Statement::Terminate => return Err(SemanticError::TerminateOutsideLoop),
-                Statement::ExprStmt(expr) | Statement::Spawn(expr) => Self::reject_receive(expr)?,
+                Statement::ExprStmt(expr) | Statement::Spawn(expr) => { Self::reject_receive(expr)?; Self::reject_memory(expr)?; },
                 Statement::Signal { payload, .. }
                 | Statement::VarDecl { value: payload, .. }
-                | Statement::Throw(payload) => Self::reject_receive(payload)?,
+                | Statement::Throw(payload) => { Self::reject_receive(payload)?; Self::reject_memory(payload)?; },
                 Statement::ForLoop { collection, body, .. } => {
                     Self::reject_receive(collection)?;
+                    Self::reject_memory(collection)?;
                     Self::validate_non_loop_body(body)?;
                 }
                 Statement::Match { target, cases } => {
                     Self::reject_receive(target)?;
+                    Self::reject_memory(target)?;
                     for case in cases { Self::validate_non_loop_body(&case.body)?; }
                 }
                 Statement::TryCatch { try_body, catch_body, .. } => {
@@ -119,12 +122,24 @@ impl TypeChecker {
         }
     }
 
+    fn reject_memory(expr: &Expr) -> Result<(), SemanticError> {
+        match expr {
+            Expr::MemoryGet(_) => Err(SemanticError::MemoryOutsideLoop),
+            Expr::FunctionCall { args, .. } => { for arg in args { Self::reject_memory(arg)?; } Ok(()) }
+            Expr::BinaryOp { left, right, .. } => { Self::reject_memory(left)?; Self::reject_memory(right) }
+            Expr::MemberAccess { target, .. } | Expr::RefCreate(target) => Self::reject_memory(target),
+            Expr::ListLiteral(items) => { for item in items { Self::reject_memory(item)?; } Ok(()) }
+            _ => Ok(()),
+        }
+    }
+
     /// Validates a statement in its declaration context. `allows_throw` is
     /// true exclusively for function bodies; `try/catch` itself is valid in
     /// every context, but a direct `throw` is not valid in routines or loops.
     fn check_stmt(&mut self, stmt: &Statement, allows_throw: bool) -> Result<(), SemanticError> {
         Self::validate_standard_library_calls(stmt, &self.functions)?;
         match stmt {
+            Statement::MemorySet { value, .. } => { Self::reject_receive(value)?; },
             Statement::Spawn(expr) => {
                 // Spawn arguments must be copyable (no Ref).
                 if let Expr::FunctionCall { name, args } = expr {
@@ -251,12 +266,13 @@ impl TypeChecker {
                         expression_is_imported(item, functions)?;
                     }
                 }
-                Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::Variable(_) | Expr::ReceiveSignal => {}
+                Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::Variable(_) | Expr::TypeOf(_) | Expr::ReceiveSignal | Expr::MemoryGet(_) => {}
             }
             Ok(())
         }
 
         match statement {
+            Statement::MemorySet { value, .. } => expression_is_imported(value, functions),
             Statement::ExprStmt(expression) | Statement::Spawn(expression) | Statement::Throw(expression) => {
                 expression_is_imported(expression, functions)
             }
@@ -294,6 +310,7 @@ impl TypeChecker {
         match expr {
             Expr::IntLiteral(_) => TypeSpec::Primitive("Int".to_string()),
             Expr::StringLiteral(_) => TypeSpec::Primitive("String".to_string()),
+            Expr::TypeOf(_) => TypeSpec::Primitive("String".to_string()),
             Expr::Variable(name) => self
                 .symbol_table
                 .get(name)

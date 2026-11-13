@@ -198,7 +198,7 @@ impl ComplexityAnalyzer {
             Statement::ExprStmt(expr) | Statement::Spawn(expr) | Statement::Throw(expr) => {
                 Self::collect_call_names_from_expr(expr, names);
             }
-            Statement::Signal { payload, .. } | Statement::VarDecl { value: payload, .. } => {
+            Statement::Signal { payload, .. } | Statement::VarDecl { value: payload, .. } | Statement::MemorySet { value: payload, .. } => {
                 Self::collect_call_names_from_expr(payload, names);
             }
             Statement::TryCatch { try_body, catch_body, .. } => {
@@ -244,7 +244,7 @@ impl ComplexityAnalyzer {
                     Self::collect_call_names_from_expr(item, names);
                 }
             }
-            Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::Variable(_) | Expr::ReceiveSignal => {}
+            Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::Variable(_) | Expr::TypeOf(_) | Expr::ReceiveSignal | Expr::MemoryGet(_) => {}
         }
     }
 
@@ -254,7 +254,7 @@ impl ComplexityAnalyzer {
             Statement::Signal { payload, .. } => Self::expr_calls(name, payload),
             Statement::Throw(expr) => Self::expr_calls(name, expr),
             Statement::TryCatch { try_body, catch_body, .. } => try_body.iter().chain(catch_body).any(|s| Self::stmt_calls(name, s)),
-            Statement::VarDecl { value, .. } => Self::expr_calls(name, value),
+            Statement::VarDecl { value, .. } | Statement::MemorySet { value, .. } => Self::expr_calls(name, value),
             Statement::ForLoop { body, .. } => body.iter().any(|s| Self::stmt_calls(name, s)),
             Statement::Match { cases, .. } => {
                 cases.iter().any(|c| c.body.iter().any(|s| Self::stmt_calls(name, s)))
@@ -302,7 +302,7 @@ impl ComplexityAnalyzer {
                 self.complexity_of_body(try_body, recursive)
                     .max(&self.complexity_of_body(catch_body, recursive))
             }
-            Statement::VarDecl { value, .. } => self.complexity_of_expr(value, recursive),
+            Statement::VarDecl { value, .. } | Statement::MemorySet { value, .. } => self.complexity_of_expr(value, recursive),
             Statement::ExprStmt(e) => self.complexity_of_expr(e, recursive),
 
             // `for x in collection { body }` → O(|collection|) × O(body)

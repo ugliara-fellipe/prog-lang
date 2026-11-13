@@ -8,8 +8,8 @@ routine Producer() {
 }
 
 loop Inbox() {
-    // At iteration start `receive` consumes one queued signal.
-    std.log("received:", receive.value, "still pending:", receive.pending)
+    // At iteration start `message` consumes one queued signal.
+    std.log("received:", message.value, "still pending:", message.pending)
 
     terminate
 }

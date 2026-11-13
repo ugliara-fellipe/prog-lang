@@ -27,6 +27,8 @@ pub struct ActorHandle {
 pub struct SignalRouter {
     /// One FIFO mailbox plus lifecycle state for each declared loop.
     mailboxes: Mutex<HashMap<String, LoopMailbox>>,
+    /// Private persistent cells keyed by loop declaration name.
+    loop_memory: Mutex<HashMap<String, HashMap<String, String>>>,
     /// Routine bodies are registered once at startup so `spawn Worker()` can
     /// materialize an independent task without sharing local arena state.
     routines: Mutex<HashMap<String, Vec<Statement>>>,
@@ -84,6 +86,16 @@ impl std::fmt::Display for RuntimeValue {
     }
 }
 
+impl RuntimeValue {
+    fn type_name(&self) -> String {
+        match self {
+            Self::Int(_) => "Int".into(), Self::String(_) => "String".into(),
+            Self::Bool(_) => "Bool".into(), Self::None => "None".into(),
+            Self::List(items) => format!("List[{}]", items.first().map(Self::type_name).unwrap_or_else(|| "Unknown".into())),
+        }
+    }
+}
+
 impl SignalRouter {
     /// Registers a user-defined function for expression evaluation.
     pub fn register_function(&self, function: FuncDecl) {
@@ -130,6 +142,7 @@ impl SignalRouter {
                     let value = Self::evaluate_expr(value, scope, router)?;
                     scope.insert(name.clone(), value);
                 }
+                Statement::MemorySet { .. } => return None,
                 Statement::ExprStmt(expr) => result = Self::evaluate_expr(expr, scope, router)?,
                 Statement::Match { target, cases } => {
                     let value = Self::evaluate_expr(target, scope, router)?;
@@ -168,6 +181,7 @@ impl SignalRouter {
                 "False" => Some(RuntimeValue::Bool(false)),
                 _ => scope.get(name).cloned(),
             },
+            Expr::TypeOf(name) => Some(RuntimeValue::String(scope.get(name)?.type_name())),
             Expr::FunctionCall { name, args } => router.evaluate_function(name, args.iter().map(|arg| Self::evaluate_expr(arg, scope, router)).collect::<Option<Vec<_>>>()?),
             Expr::BinaryOp { op, left, right } => {
                 let left = Self::evaluate_expr(left, scope, router)?;
@@ -181,7 +195,7 @@ impl SignalRouter {
                 }
             }
             Expr::RefCreate(inner) => Self::evaluate_expr(inner, scope, router),
-            Expr::MemberAccess { .. } | Expr::ReceiveSignal => None,
+            Expr::MemberAccess { .. } | Expr::ReceiveSignal | Expr::MemoryGet(_) => None,
         }
     }
 
@@ -277,6 +291,17 @@ impl SignalRouter {
         if let Some(mailbox) = self.mailboxes.lock().expect("signal mailbox lock poisoned").get_mut(name) {
             mailbox.active = false;
         }
+        self.loop_memory.lock().expect("loop memory lock poisoned").remove(name);
+    }
+
+    pub fn memory_get(&self, loop_name: &str, key: &str) -> Option<String> {
+        self.loop_memory.lock().expect("loop memory lock poisoned")
+            .get(loop_name).and_then(|memory| memory.get(key)).cloned()
+    }
+
+    pub fn memory_set(&self, loop_name: &str, key: String, value: String) {
+        self.loop_memory.lock().expect("loop memory lock poisoned")
+            .entry(loop_name.to_string()).or_default().insert(key, value);
     }
 
     pub fn has_loop(&self, name: &str) -> bool {
