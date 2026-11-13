@@ -337,6 +337,7 @@ async fn execute_runtime(program: &Program, verbose: bool) -> Result<(), Box<dyn
         let (tx, rx) = mpsc::channel(32);
         let mut event_loop = RuntimeEventLoop::with_verbose(rx, verbose);
         let signal_router = event_loop.signal_router();
+        signal_router.register_enums(program);
         let shutdown_handle = event_loop.shutdown_handle();
         let actor_handle = ActorHandle::new(tx);
 
@@ -417,6 +418,9 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
         "programs/13_library_consumer.lia",
         "programs/14_type_of.lia",
         "programs/15_higher_order.lia",
+        "programs/16_generics.lia",
+        "programs/17_enums.lia",
+        "programs/18_closures.lia",
         "programs/math.lia",
         "programs/std.lia",
     ];

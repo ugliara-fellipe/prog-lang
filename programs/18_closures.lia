@@ -1,0 +1,24 @@
+import std
+enum Handler { Run((Int) -> Int) }
+func adder(base: Int) -> (Int) -> Int {
+    |x: Int| -> Int { base + x }
+}
+func compose(f: (Int) -> Int, g: (Int) -> Int) -> (Int) -> Int {
+    |x: Int| -> Int { f(g(x)) }
+}
+func nested(base: Int) -> () -> (Int) -> Int {
+    || -> (Int) -> Int { |x: Int| -> Int { base + x } }
+}
+routine Worker(f: (Int) -> Int) { std.log("worker", f(9)) }
+routine main() {
+    let offset = 10
+    let inc = |x: Int| -> Int { offset + x }
+    let copy = inc
+    let offset = 20
+    std.log("snapshot", inc(2), copy(3), offset)
+    std.log("returned", adder(5)(2), compose(adder(2), adder(3))(1))
+    std.log("nested", nested(30)()(2))
+    let handler = Run(copy)
+    match handler { Run(f) => std.log("enum", f(4)) }
+    spawn Worker(copy)
+}

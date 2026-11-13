@@ -16,6 +16,7 @@ pub enum ParseError {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Type,
+    Enum,
     Func,
     Routine,
     Loop,
@@ -60,6 +61,7 @@ pub enum TokenKind {
     Minus,
     Star,
     Slash,
+    Pipe,
     // Literals & Identifiers
     Id(String),
     Int(i64),
@@ -156,6 +158,7 @@ impl<'a> Lexer<'a> {
 
             let kind = match ident.as_str() {
                 "type" => TokenKind::Type,
+                "enum" => TokenKind::Enum,
                 "func" => TokenKind::Func,
                 "routine" => TokenKind::Routine,
                 "loop" => TokenKind::Loop,
@@ -312,6 +315,7 @@ impl<'a> Lexer<'a> {
             '-' => TokenKind::Minus,
             '*' => TokenKind::Star,
             '/' => TokenKind::Slash,
+            '|' => TokenKind::Pipe,
             '<' => TokenKind::Lt,
             '>' => TokenKind::Gt,
             other => {
@@ -497,6 +501,7 @@ impl<'a> Parser<'a> {
         match self.current.kind {
             TokenKind::Import => self.parse_import_decl().map(TopLevelDecl::Import),
             TokenKind::Type => self.parse_type_decl().map(TopLevelDecl::Type),
+            TokenKind::Enum => self.parse_enum_decl().map(TopLevelDecl::Type),
             TokenKind::Func => self.parse_func_decl().map(TopLevelDecl::Func),
             TokenKind::Routine => self.parse_routine_decl().map(TopLevelDecl::Routine),
             TokenKind::Loop => self.parse_loop_decl().map(TopLevelDecl::Loop),
@@ -534,7 +539,32 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(TokenKind::RBrace)?;
-        Ok(TypeDecl { name, type_params, fields })
+        Ok(TypeDecl { name, type_params, fields, variants: vec![] })
+    }
+
+    fn parse_enum_decl(&mut self) -> Result<TypeDecl, ParseError> {
+        self.expect(TokenKind::Enum)?;
+        let name=self.expect_id()?;
+        let type_params=self.parse_type_params()?;
+        self.expect(TokenKind::LBrace)?;
+        let mut variants=Vec::new();
+        while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            let variant=self.expect_id()?;
+            if matches!(variant.as_str(),"True"|"False"|"Nil"|"Cons") || !variant.chars().next().is_some_and(char::is_uppercase) || variants.iter().any(|v: &EnumVariant|v.name==variant) {
+                return Err(ParseError::SyntaxError {line:self.current.line,col:self.current.col,message:"enum variants must have distinct capitalized names".into()});
+            }
+            let mut fields=Vec::new();
+            if self.check(&TokenKind::LParen) {
+                self.advance()?;
+                while !self.check(&TokenKind::RParen) { fields.push(self.parse_type_spec()?); if !self.check(&TokenKind::Comma) {break;} self.advance()?; }
+                self.expect(TokenKind::RParen)?;
+            }
+            variants.push(EnumVariant {name:variant,fields});
+            if !self.check(&TokenKind::Comma) {break;} self.advance()?;
+        }
+        self.expect(TokenKind::RBrace)?;
+        if variants.is_empty() {return Err(ParseError::SyntaxError {line:self.current.line,col:self.current.col,message:"enum must declare at least one variant".into()});}
+        Ok(TypeDecl {name,type_params,fields:vec![],variants})
     }
 
     fn parse_func_decl(&mut self) -> Result<FuncDecl, ParseError> {
@@ -661,7 +691,7 @@ impl<'a> Parser<'a> {
             return Ok(TypeSpec::Function(params, Box::new(self.parse_type_spec()?)));
         }
         let mut name = self.expect_id()?;
-        if self.check(&TokenKind::Dot) {
+        while self.check(&TokenKind::Dot) {
             self.advance()?;
             let item = self.expect_id()?;
             name = format!("{}.{}", name, item);
@@ -838,7 +868,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
-        let name = self.expect_id()?;
+        let mut name = self.expect_id()?;
+        while self.check(&TokenKind::Dot) {self.advance()?; name.push('.');name.push_str(&self.expect_id()?);}
         if name == "_" {
             return Ok(Pattern::Wildcard);
         }
@@ -856,7 +887,7 @@ impl<'a> Parser<'a> {
             }
             self.expect(TokenKind::RParen)?;
             Ok(Pattern::Constructor(name, sub_pats))
-        } else if matches!(name.as_str(), "Nil" | "True" | "False") {
+        } else if name.rsplit('.').next().and_then(|n|n.chars().next()).is_some_and(char::is_uppercase) {
             // These are zero-argument constructors, not variable bindings.
             // Keeping them as constructors lets the runtime distinguish an
             // empty list (or boolean branch) from a catch-all identifier.
@@ -949,6 +980,10 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn qualified_expr(expr:&Expr)->Option<String> {
+        match expr {Expr::Variable(n)=>Some(n.clone()),Expr::MemberAccess{target,field}=>Some(format!("{}.{}",Self::qualified_expr(target)?,field)),_=>None}
+    }
+
     fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_primary()?;
         loop {
@@ -986,7 +1021,7 @@ impl<'a> Parser<'a> {
                         expr = Expr::FunctionCall { name, args };
                     }
                     Expr::MemberAccess { target, field } => {
-                        if let Expr::Variable(pkg) = *target {
+                        if let Some(pkg) = Self::qualified_expr(&target) {
                             expr = Expr::FunctionCall {
                                 name: format!("{}.{}", pkg, field),
                                 args,
@@ -1027,8 +1062,26 @@ impl<'a> Parser<'a> {
         Ok(args)
     }
 
+    fn parse_closure(&mut self) -> Result<Expr,ParseError> {
+        self.expect(TokenKind::Pipe)?;
+        let mut params:Vec<Param>=Vec::new();
+        while !self.check(&TokenKind::Pipe) {
+            let name=self.expect_id()?;
+            if params.iter().any(|p|p.name==name){return Err(ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:format!("duplicate closure parameter {}",name)});}
+            self.expect(TokenKind::Colon)?;
+            let param_type=self.parse_type_spec()?;
+            params.push(Param{name,param_type});
+            if !self.check(&TokenKind::Comma){break;}self.advance()?;
+        }
+        self.expect(TokenKind::Pipe)?;self.expect(TokenKind::Arrow)?;
+        let return_type=self.parse_type_spec()?;
+        let body=self.parse_block()?;
+        Ok(Expr::Closure{params,return_type,body})
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         match &self.current.kind {
+            TokenKind::Pipe => self.parse_closure(),
             TokenKind::Int(val) => {
                 let v = *val;
                 self.advance()?;

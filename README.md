@@ -244,9 +244,25 @@ routine main() {
 
 The compiler propagates possible function targets to a fixed point and uses
 them for cycle, termination, and complexity checks. Unresolved indirect calls
-and indirect cycles are rejected. Capturing closures and generic functions
-remain separate features. See the [mathematical model](ORDEM_SUPERIOR.md) and
+and indirect cycles are rejected. Capturing closures and generic functions are described in
+[CLOSURES.md](CLOSURES.md) and [GENERICOS.md](GENERICOS.md). See the [mathematical model](ORDEM_SUPERIOR.md) and
 [executable example](programs/15_higher_order.lia).
+
+### Closures with value capture
+
+Closures use explicit parameter and return types and capture the free local
+variables they read by value:
+
+```lia
+func adder(base: Int) -> (Int) -> Int {
+    |x: Int| -> Int { base + x }
+}
+```
+
+Returned closures retain their copied environments. They can be passed to
+functions and routines, stored in lists or enum variants, and copied through
+`spawn`. Capturing references or data containing references is rejected.
+See [CLOSURES.md](CLOSURES.md) and [18_closures.lia](programs/18_closures.lia).
 
 ### Copy / Reference Assignment Rules
 
@@ -317,3 +333,17 @@ cargo run -- complexity programs/09_loop_signals.lia Inbox
 
 ## 📄 License
 MIT License - Feel free to contribute!
+
+### Generic types and functions
+
+Parametric declarations such as `func identity<T>(x: T) -> T { x }` support
+inferred calls (`identity(3)`) and explicit specialization (`identity<Int>(3)`).
+See [GENERICOS.md](GENERICOS.md) and [16_generics.lia](programs/16_generics.lia)
+for generic callbacks, lists, records, and routine arguments.
+
+### Algebraic data types
+
+Declare discriminated values with `enum Result { Ok(Int), Err(String) }` and
+inspect them with exhaustive `match` patterns. Generic and recursive enums,
+qualified constructors, and copied actor arguments are supported. See
+[ENUMS.md](ENUMS.md) and [17_enums.lia](programs/17_enums.lia).

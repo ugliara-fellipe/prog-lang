@@ -44,6 +44,7 @@ pub struct SignalRouter {
     /// deliberately limited to the explicitly imported `std.*` namespace.
     functions: Mutex<HashMap<String, FuncDecl>>,
     errors: Mutex<Vec<String>>,
+    constructors: Mutex<crate::semantic::adt::Constructors>,
 }
 
 struct LoopMailbox {
@@ -75,6 +76,8 @@ pub enum RuntimeValue {
     List(Vec<RuntimeValue>),
     /// A named function without captured state. Cloning copies its identity.
     Function(String),
+    Closure { params: Vec<Param>, body: Vec<Statement>, captures: HashMap<String,RuntimeValue> },
+    Enum { enum_name: String, variant: String, fields: Vec<RuntimeValue> },
     None,
 }
 
@@ -85,6 +88,7 @@ impl std::fmt::Display for RuntimeValue {
             RuntimeValue::String(value) => write!(formatter, "{}", value),
             RuntimeValue::Bool(value) => write!(formatter, "{}", value),
             RuntimeValue::Function(name) => write!(formatter, "{}", name),
+            RuntimeValue::Closure{..} => write!(formatter,"<closure>"),
             RuntimeValue::List(items) => {
                 write!(formatter, "[")?;
                 for (index, item) in items.iter().enumerate() {
@@ -92,6 +96,11 @@ impl std::fmt::Display for RuntimeValue {
                     write!(formatter, "{}", item)?;
                 }
                 write!(formatter, "]")
+            }
+            RuntimeValue::Enum {variant,fields,..} => {
+                write!(formatter,"{}",variant)?;
+                if !fields.is_empty() {write!(formatter,"(")?;for (i,field) in fields.iter().enumerate(){if i>0 {write!(formatter,", ")?;}write!(formatter,"{}",field)?;}write!(formatter,")")?;}
+                Ok(())
             }
             RuntimeValue::None => write!(formatter, "None"),
         }
@@ -103,7 +112,8 @@ impl RuntimeValue {
         match self {
             Self::Int(_) => "Int".into(), Self::String(_) => "String".into(),
             Self::Bool(_) => "Bool".into(), Self::None => "None".into(),
-            Self::Function(_) => "Function".into(),
+            Self::Function(_) | Self::Closure{..} => "Function".into(),
+            Self::Enum {enum_name,..} => enum_name.clone(),
             Self::List(items) => format!("List[{}]", items.first().map(Self::type_name).unwrap_or_else(|| "Unknown".into())),
         }
     }
@@ -127,6 +137,12 @@ struct EvaluationContext<'a> {
 }
 
 impl SignalRouter {
+    pub fn register_enums(&self, program:&crate::ast::Program) {
+        *self.constructors.lock().expect("constructor registry lock poisoned")=crate::semantic::adt::Constructors::new(program);
+    }
+    fn constructor_value(&self, name:&str)->Option<RuntimeValue> {
+        self.constructors.lock().expect("constructor registry lock poisoned").entries.get(name).map(|c|if c.fields.is_empty(){RuntimeValue::Enum{enum_name:c.owner.clone(),variant:c.variant.clone(),fields:vec![]}}else{RuntimeValue::Function(name.into())})
+    }
     /// Registers a user-defined function for expression evaluation.
     pub fn register_function(&self, function: FuncDecl) {
         self.functions.lock().expect("function registry lock poisoned")
@@ -141,6 +157,11 @@ impl SignalRouter {
     }
 
     pub fn evaluate_function_result(&self, name: &str, args: Vec<RuntimeValue>) -> Result<RuntimeValue, EvaluationFailure> {
+        let constructor=self.constructors.lock().expect("constructor registry lock poisoned").entries.get(name).cloned();
+        if let Some(c)=constructor {
+            if args.len()!=c.fields.len() {return Err(EvaluationFailure::Invalid);}
+            return Ok(RuntimeValue::Enum{enum_name:c.owner,variant:c.variant,fields:args});
+        }
         if crate::stdlib::is_total_standard_function(name) {
             // A direct runtime call cannot bypass package resolution either:
             // only a registered, imported declaration unlocks `std.*`.
@@ -156,6 +177,18 @@ impl SignalRouter {
             scope.insert(param.name.clone(), value);
         }
         Self::evaluate_block(&function.body, &mut scope, self)
+    }
+
+    fn invoke_value(&self,target:RuntimeValue,args:Vec<RuntimeValue>)->Result<RuntimeValue,EvaluationFailure>{
+        match target {
+            RuntimeValue::Function(name)=>self.evaluate_function_result(&name,args),
+            RuntimeValue::Closure{params,body,mut captures}=>{
+                if params.len()!=args.len(){return Err(EvaluationFailure::Invalid);}
+                for (param,value) in params.iter().zip(args){captures.insert(param.name.clone(),value);}
+                Self::evaluate_block(&body,&mut captures,self)
+            },
+            _=>Err(EvaluationFailure::Invalid),
+        }
     }
 
     /// Evaluates a closed expression supplied by a routine (for example, a
@@ -207,7 +240,7 @@ impl SignalRouter {
                 Statement::ExprStmt(expr) => result = Self::evaluate_expr(expr, scope, router)?,
                 Statement::Match { target, cases } => {
                     let value = Self::evaluate_expr(target, scope, router)?;
-                    let case = cases.iter().find(|case| Self::pattern_matches(&case.pattern, &value)).ok_or(EvaluationFailure::Invalid)?;
+                    let case = cases.iter().find(|case| router.pattern_matches(&case.pattern, &value)).ok_or(EvaluationFailure::Invalid)?;
                     let mut branch_scope = scope.clone();
                     Self::bind_pattern(&case.pattern, &value, &mut branch_scope);
                     result = Self::evaluate_block(&case.body, &mut branch_scope, router)?;
@@ -249,6 +282,10 @@ impl SignalRouter {
 
     fn evaluate_expr_context(expr: &Expr, scope: &HashMap<String, RuntimeValue>, router: &SignalRouter, context: EvaluationContext<'_>) -> Result<RuntimeValue, EvaluationFailure> {
         match expr {
+            Expr::Closure{params,body,..}=>{
+                let captures=crate::semantic::closures::free_variables(params,body).into_iter().filter_map(|n|scope.get(&n).cloned().map(|v|(n,v))).collect();
+                Ok(RuntimeValue::Closure{params:params.clone(),body:body.clone(),captures})
+            },
             Expr::IntLiteral(value) => Ok(RuntimeValue::Int(*value)),
             Expr::StringLiteral(value) => Ok(RuntimeValue::String(value.clone())),
             Expr::ListLiteral(items) => Ok(RuntimeValue::List(items.iter().map(|item| Self::evaluate_expr_context(item, scope, router, context)).collect::<Result<Vec<_>, _>>()?)),
@@ -259,21 +296,24 @@ impl SignalRouter {
                 _ => scope.get(name).cloned().or_else(|| {
                     router.functions.lock().expect("function registry lock poisoned")
                         .contains_key(name).then(|| RuntimeValue::Function(name.clone()))
-                }).ok_or(EvaluationFailure::Invalid),
+                }).or_else(||router.constructor_value(name)).ok_or(EvaluationFailure::Invalid),
             },
             Expr::TypeOf(name) => Ok(RuntimeValue::String(context.types.and_then(|types| types.get(name)).cloned().or_else(|| scope.get(name).map(RuntimeValue::type_name)).ok_or(EvaluationFailure::Invalid)?)),
             Expr::FunctionCall { name, args } => {
                 if Self::qualified_is_shadowed(name, scope) { return Err(EvaluationFailure::Invalid); }
-                let target = match scope.get(name) {
-                    Some(RuntimeValue::Function(target)) => target.as_str(),
-                    Some(_) => return Err(EvaluationFailure::Invalid),
-                    None => name.as_str(),
-                };
-                router.evaluate_function_result(target, args.iter().map(|arg| Self::evaluate_expr_context(arg, scope, router, context)).collect::<Result<Vec<_>, _>>()?)
+                let target=scope.get(name).cloned().unwrap_or_else(||RuntimeValue::Function(name.clone()));
+                router.invoke_value(target,args.iter().map(|arg|Self::evaluate_expr_context(arg,scope,router,context)).collect::<Result<Vec<_>,_>>()?)
             }
             Expr::IndirectCall { target, args } => {
-                let RuntimeValue::Function(name) = Self::evaluate_expr_context(target, scope, router, context)? else { return Err(EvaluationFailure::Invalid); };
-                router.evaluate_function_result(&name, args.iter().map(|arg| Self::evaluate_expr_context(arg, scope, router, context)).collect::<Result<Vec<_>, _>>()?)
+                if let Expr::Specialize{target:named,..}=target.as_ref() {
+                    if let Some(name)=Self::qualified_expression_name(named) {
+                        if !Self::qualified_is_shadowed(&name,scope) && !scope.contains_key(&name) && router.constructors.lock().unwrap().entries.contains_key(&name) {
+                            return router.evaluate_function_result(&name,args.iter().map(|arg|Self::evaluate_expr_context(arg,scope,router,context)).collect::<Result<Vec<_>,_>>()?);
+                        }
+                    }
+                }
+                let target=Self::evaluate_expr_context(target,scope,router,context)?;
+                router.invoke_value(target,args.iter().map(|arg|Self::evaluate_expr_context(arg,scope,router,context)).collect::<Result<Vec<_>,_>>()?)
             }
             // Type arguments are checked statically. Named functions carry
             // no captured state, so instantiation preserves their identity.
@@ -313,7 +353,7 @@ impl SignalRouter {
                 if Self::qualified_is_shadowed(&name, scope) { return Err(EvaluationFailure::Invalid); }
                 if router.functions.lock().expect("function registry lock poisoned").contains_key(&name) {
                     Ok(RuntimeValue::Function(name))
-                } else { Err(EvaluationFailure::Invalid) }
+                } else { router.constructor_value(&name).ok_or(EvaluationFailure::Invalid) }
             }
             Expr::ReceiveSignal => Ok(context.signal.and_then(|signal| signal.value.clone()).map(RuntimeValue::String).unwrap_or(RuntimeValue::None)),
             Expr::MemoryGet(key) => {
@@ -323,16 +363,22 @@ impl SignalRouter {
         }
     }
 
+    fn qualified_expression_name(expr:&Expr)->Option<String>{match expr{Expr::Variable(n)=>Some(n.clone()),Expr::MemberAccess{target,field}=>Some(format!("{}.{}",Self::qualified_expression_name(target)?,field)),_=>None}}
+
     fn qualified_is_shadowed(name: &str, scope: &HashMap<String, RuntimeValue>) -> bool {
         name.split_once('.').is_some_and(|(root, _)| scope.contains_key(root))
     }
 
-    pub(crate) fn pattern_matches(pattern: &Pattern, value: &RuntimeValue) -> bool {
+    pub(crate) fn pattern_matches(&self, pattern: &Pattern, value: &RuntimeValue) -> bool {
         match (pattern, value) {
             (Pattern::Wildcard | Pattern::Identifier(_), _) => true,
+            (Pattern::Constructor(name,patterns),RuntimeValue::Enum{enum_name,variant,fields}) => {
+                let correct=self.constructors.lock().expect("constructor registry lock poisoned").entries.get(name).is_some_and(|c|&c.owner==enum_name && &c.variant==variant);
+                correct && patterns.len()==fields.len() && patterns.iter().zip(fields).all(|(p,v)|self.pattern_matches(p,v))
+            },
             (Pattern::Constructor(name, patterns), RuntimeValue::List(items)) if name == "Nil" => patterns.is_empty() && items.is_empty(),
             (Pattern::Constructor(name, patterns), RuntimeValue::List(items)) if name == "Cons" && patterns.len() == 2 => {
-                items.split_first().is_some_and(|(head, tail)| Self::pattern_matches(&patterns[0], head) && Self::pattern_matches(&patterns[1], &RuntimeValue::List(tail.to_vec())))
+                items.split_first().is_some_and(|(head, tail)| self.pattern_matches(&patterns[0], head) && self.pattern_matches(&patterns[1], &RuntimeValue::List(tail.to_vec())))
             }
             (Pattern::Constructor(name, patterns), RuntimeValue::Bool(value)) if name == "True" => patterns.is_empty() && *value,
             (Pattern::Constructor(name, patterns), RuntimeValue::Bool(value)) if name == "False" => patterns.is_empty() && !*value,
@@ -343,6 +389,9 @@ impl SignalRouter {
     pub(crate) fn bind_pattern(pattern: &Pattern, value: &RuntimeValue, scope: &mut HashMap<String, RuntimeValue>) {
         match pattern {
             Pattern::Identifier(name) => { scope.insert(name.clone(), value.clone()); }
+            Pattern::Constructor(_, patterns) if matches!(value,RuntimeValue::Enum{..}) => {
+                if let RuntimeValue::Enum{fields,..}=value {for (p,v) in patterns.iter().zip(fields) {Self::bind_pattern(p,v,scope);}}
+            }
             Pattern::Constructor(name, patterns) if name == "Cons" && patterns.len() == 2 => {
                 if let RuntimeValue::List(items) = value {
                     if let Some((head, tail)) = items.split_first() {

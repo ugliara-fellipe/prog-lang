@@ -26,6 +26,9 @@ This directory contains a suite of programs written in **Lia** (`.lia`), designe
 | [`13_library_consumer.lia`](13_library_consumer.lia) | Executable consumer of `03_structural_recursion.lia` via quoted package import. |
 | [`14_type_of.lia`](14_type_of.lia) | Type introspection for local values. |
 | [`15_higher_order.lia`](15_higher_order.lia) | Function arguments, returns, local copies, lists, patterns, chained calls, and copied callback arguments in `spawn`. |
+| [`16_generics.lia`](16_generics.lia) | Generic functions, recursive map, specialized callbacks, and generic routine arguments. |
+| [`17_enums.lia`](17_enums.lia) | Generic and recursive enum values, exhaustive matching, and copied enum arguments in spawn. |
+| [`18_closures.lia`](18_closures.lia) | Copied closure environments, snapshots, returned and nested closures, composition, enum payloads, and spawn. |
 | [`math.lia`](math.lia) and [`std.lia`](std.lia) | Libraries: they have no `main` and become available only through explicit imports. |
 
 ---

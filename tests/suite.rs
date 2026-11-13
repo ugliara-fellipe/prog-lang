@@ -183,13 +183,13 @@ fn test_higher_order_global_call_and_branch_return_types_are_checked() {
         func choose(flag: Int) -> (Int) -> Int { match flag { 0 => good, _ => wrong } }
     "#;
     // Lia patterns use identifiers rather than integer literals.
-    let source = source.replace("0 => good", "Zero => good");
+    let source = source.replace("0 => good", "zero => good");
     let program = Parser::new(&source).unwrap().parse_program().unwrap();
     assert!(matches!(TypeChecker::new().check_program(&program), Err(SemanticError::FunctionReturnTypeMismatch { .. })));
 
     let source = r#"
         func good(x: Int) -> Int { x }
-        func choose(flag: Int) -> (Int) -> Int { match flag { Zero => good, _ => good } }
+        func choose(flag: Int) -> (Int) -> Int { match flag { zero => good, _ => good } }
     "#;
     let program = Parser::new(source).unwrap().parse_program().unwrap();
     assert_eq!(TypeChecker::new().check_program(&program), Ok(()));

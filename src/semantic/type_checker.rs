@@ -3,6 +3,7 @@ use crate::ast::*;
 use crate::semantic::SemanticError;
 use crate::semantic::generics::{self, Substitution};
 
+#[derive(Clone)]
 pub struct TypeChecker {
     /// Symbol table for the current scope (functions and variables).
     symbol_table: HashMap<String, TypeSpec>,
@@ -10,6 +11,7 @@ pub struct TypeChecker {
     functions: HashMap<String, FuncDecl>,
     routines: HashMap<String, RoutineDecl>,
     types: HashMap<String, TypeDecl>,
+    constructors: crate::semantic::adt::Constructors,
     standard_signatures: bool,
     type_variables: HashSet<String>,
     /// Loop declarations known to this program; signals are addressed only to
@@ -51,6 +53,7 @@ impl TypeChecker {
             functions: HashMap::new(),
             routines: HashMap::new(),
             types: HashMap::new(),
+            constructors: Default::default(),
             standard_signatures: false,
             type_variables: HashSet::new(),
             loops: HashSet::new(),
@@ -63,12 +66,17 @@ impl TypeChecker {
         self.functions.clear();
         self.routines.clear();
         self.types.clear();
+        self.constructors=crate::semantic::adt::Constructors::new(program);
         self.loops.clear();
         self.standard_signatures = crate::stdlib::validate_standard_library(program).is_ok();
         // Collect first so a function may signal a loop declared later in the
         // file, while rejecting duplicate names before runtime startup.
         for decl in &program.declarations {
-            if let TopLevelDecl::Type(ty) = decl { self.types.insert(ty.name.clone(), ty.clone()); }
+            if let TopLevelDecl::Type(ty) = decl {
+                if matches!(ty.name.as_str(),"Int"|"Bool"|"String"|"List"|"Ref"|"Unknown"|"Unit") || self.types.insert(ty.name.clone(),ty.clone()).is_some() {
+                    return Err(SemanticError::InvalidExpression(format!("duplicate or reserved type name {}",ty.name)));
+                }
+            }
             if let TopLevelDecl::Func(func) = decl {
                 self.functions.insert(func.name.clone(), func.clone());
             }
@@ -81,6 +89,11 @@ impl TypeChecker {
                 }
             }
         }
+        for name in self.constructors.entries.keys() {
+            if self.functions.contains_key(name) || self.routines.contains_key(name) || self.loops.contains(name) {
+                return Err(SemanticError::InvalidExpression(format!("constructor name {} collides with another declaration",name)));
+            }
+        }
         for decl in &program.declarations {
             self.symbol_table.clear();
             self.type_variables.clear();
@@ -88,7 +101,7 @@ impl TypeChecker {
                 TopLevelDecl::Func(func) => self.check_func(func)?,
                 TopLevelDecl::Routine(routine) => self.check_routine(routine)?,
                 TopLevelDecl::Loop(loop_decl) => self.check_loop(loop_decl)?,
-                TopLevelDecl::Type(ty) => { self.bind_type_parameters(&ty.type_params)?; for field in &ty.fields { self.validate_type(&field.field_type)?; } },
+                TopLevelDecl::Type(ty) => { self.bind_type_parameters(&ty.type_params)?; for field in &ty.fields { self.validate_type(&field.field_type)?; } for variant in &ty.variants {for field in &variant.fields {self.validate_type(field)?;}} },
                 _ => {}
             }
         }
@@ -122,6 +135,7 @@ impl TypeChecker {
 
     /// Check a routine declaration (actors). Routine parameters cannot be `Ref` – this is enforced by the parser.
     fn check_routine(&mut self, routine: &RoutineDecl) -> Result<(), SemanticError> {
+        if routine.name == "main" && !routine.type_params.is_empty() { return Err(SemanticError::GenericTypeError("main cannot declare type parameters".into())); }
         self.bind_type_parameters(&routine.type_params)?;
         for param in &routine.params { self.validate_type(&param.param_type)?; }
         Self::validate_non_loop_body(&routine.body)?;
@@ -161,23 +175,48 @@ impl TypeChecker {
         }
     }
 
-    fn compatible(expected: &TypeSpec, actual: &TypeSpec) -> bool {
+    fn compatible(&self, expected: &TypeSpec, actual: &TypeSpec) -> bool {
+        let expected=self.constructors.normalize(expected); let actual=self.constructors.normalize(actual);
+        let (expected,actual)=(&expected,&actual);
         if Self::contains_function_type(expected) || Self::contains_function_type(actual) { return expected == actual; }
         match (expected, actual) {
-            (TypeSpec::Ref(inner), other) | (other, TypeSpec::Ref(inner)) => Self::compatible(inner, other),
+            (TypeSpec::Ref(inner), other) | (other, TypeSpec::Ref(inner)) => self.compatible(inner, other),
             _ => expected == actual,
         }
     }
 
-    fn exhaustive(cases: &[MatchCase], ty: &TypeSpec) -> bool {
-        let any = |p: &Pattern| matches!(p, Pattern::Wildcard | Pattern::Identifier(_));
-        if cases.iter().any(|c| any(&c.pattern)) { return true; }
-        let ctor = |name: &str, arity| cases.iter().any(|c| matches!(&c.pattern, Pattern::Constructor(n, args) if n == name && args.len() == arity && args.iter().all(&any)));
-        match ty {
-            TypeSpec::Primitive(name) if name == "Bool" => ctor("True", 0) && ctor("False", 0),
-            TypeSpec::Generic(name, _) if name == "List" => ctor("Nil", 0) && ctor("Cons", 2),
-            _ => false,
-        }
+    fn variant_fields(&self, ty:&TypeSpec)->Option<Vec<(String,Vec<TypeSpec>)>> {
+        let ty=self.constructors.normalize(ty);
+        let (name,args)=match &ty {TypeSpec::Primitive(n)=>(n,vec![]),TypeSpec::Generic(n,a)=>(n,a.clone()),_=>return None};
+        if name=="Bool" {return Some(vec![("True".into(),vec![]),("False".into(),vec![])]);}
+        if name=="List" && args.len()==1 {return Some(vec![("Nil".into(),vec![]),("Cons".into(),vec![args[0].clone(),ty.clone()])]);}
+        let decl=self.types.get(name)?;
+        if decl.variants.is_empty() {return None;}
+        let sub=decl.type_params.iter().cloned().zip(args).collect();
+        Some(decl.variants.iter().map(|v|(format!("{}.{}",name,v.name),v.fields.iter().map(|f|self.constructors.normalize(&generics::substitute(f,&sub))).collect())).collect())
+    }
+    fn pattern_tag(&self, name:&str)->String {
+        self.constructors.entries.get(name).map(|c|format!("{}.{}",c.owner,c.variant)).unwrap_or_else(||name.into())
+    }
+    fn exhaustive_matrix(&self, rows:&[Vec<Pattern>], types:&[TypeSpec])->bool {
+        if types.is_empty() {return !rows.is_empty();}
+        let wild=|p:&Pattern|matches!(p,Pattern::Wildcard|Pattern::Identifier(_));
+        if rows.is_empty() {return false;}
+        if rows.iter().all(|r|wild(&r[0])) {return self.exhaustive_matrix(&rows.iter().map(|r|r[1..].to_vec()).collect::<Vec<_>>(),&types[1..]);}
+        if let Some(variants)=self.variant_fields(&types[0]) {
+            variants.iter().all(|(tag,fields)| {
+                let mut specialized=Vec::new();
+                for row in rows {
+                    let mut prefix=if wild(&row[0]) {vec![Pattern::Wildcard;fields.len()]} else if let Pattern::Constructor(name,parts)=&row[0] {if self.pattern_tag(name)!=*tag {continue;} parts.clone()} else {continue;};
+                    prefix.extend_from_slice(&row[1..]); specialized.push(prefix);
+                }
+                let mut next=fields.clone();next.extend_from_slice(&types[1..]);
+                self.exhaustive_matrix(&specialized,&next)
+            })
+        } else {self.exhaustive_matrix(&rows.iter().filter(|r|wild(&r[0])).map(|r|r[1..].to_vec()).collect::<Vec<_>>(),&types[1..])}
+    }
+    fn exhaustive(&self, cases:&[MatchCase], ty:&TypeSpec)->bool {
+        self.exhaustive_matrix(&cases.iter().map(|c|vec![c.pattern.clone()]).collect::<Vec<_>>(),&[ty.clone()])
     }
 
     fn copyable(&self, ty: &TypeSpec, seen: &mut HashSet<String>) -> bool {
@@ -189,7 +228,7 @@ impl TypeChecker {
                 match self.types.get(name) {
                     Some(decl) if seen.insert(name.clone()) => {
                         let substitution:Substitution=decl.type_params.iter().cloned().zip(args.iter().cloned()).collect();
-                        let result=decl.fields.iter().all(|field| self.copyable(&generics::substitute(&field.field_type,&substitution),seen));
+                        let result=decl.fields.iter().map(|f|&f.field_type).chain(decl.variants.iter().flat_map(|v|v.fields.iter())).all(|field| self.copyable(&generics::substitute(field,&substitution),seen));
                         seen.remove(name); result
                     }
                     _=>true
@@ -198,7 +237,7 @@ impl TypeChecker {
             TypeSpec::Primitive(name) if name == "Unknown" => false,
             TypeSpec::Primitive(name) => match self.types.get(name) {
                 Some(decl) if seen.insert(name.clone()) => {
-                    let result = decl.fields.iter().all(|field| self.copyable(&field.field_type, seen));
+                    let result = decl.fields.iter().map(|f|&f.field_type).chain(decl.variants.iter().flat_map(|v|v.fields.iter())).all(|field| self.copyable(field, seen));
                     seen.remove(name);
                     result
                 }
@@ -214,38 +253,44 @@ impl TypeChecker {
         }
     }
 
-    fn check_argument_types(&self, name: &str, parameters: &[TypeSpec], args: &[Expr]) -> Result<(), SemanticError> {
-        if parameters.len() != args.len() {
-            return Err(SemanticError::ArgumentCountMismatch { function: name.into(), expected: parameters.len(), found: args.len() });
-        }
-        for (index, (expected, arg)) in parameters.iter().zip(args).enumerate() {
-            let actual = self.infer_type(arg);
-            if !self.expression_compatible(expected, arg) {
-                return Err(SemanticError::FunctionArgumentTypeMismatch { index: index + 1, expected: expected.clone(), actual });
-            }
-        }
-        Ok(())
-    }
-
     fn expression_compatible(&self, expected: &TypeSpec, expr: &Expr) -> bool {
         if let (TypeSpec::Generic(name, args), Expr::ListLiteral(items)) = (expected, expr) {
             if name == "List" && args.len() == 1 { return items.iter().all(|item| self.expression_compatible(&args[0], item)); }
         }
         let actual = self.check_expr(expr,Some(expected)).unwrap_or(TypeSpec::Primitive("Unknown".into()));
-        Self::compatible(expected, &actual) && !Self::contains_unknown_type(&actual)
+        self.compatible(expected, &actual) && !Self::contains_unknown_type(&actual)
     }
 
     fn never_completes(&self, body: &[Statement]) -> bool {
         body.iter().any(|statement| match statement {
             Statement::Throw(_) => true,
-            Statement::Match { target, cases } => Self::exhaustive(cases, &self.infer_type(target))
+            Statement::Match { target, cases } => self.exhaustive(cases, &self.infer_type(target))
                 && cases.iter().all(|case| self.never_completes(&case.body)),
             Statement::TryCatch { try_body, catch_body, .. } => self.never_completes(try_body) && self.never_completes(catch_body),
             _ => false,
         })
     }
 
+    fn validate_pattern_bindings(pattern:&Pattern,names:&mut HashSet<String>)->Result<(),SemanticError>{
+        match pattern {
+            Pattern::Identifier(n)=>{if !names.insert(n.clone()){return Err(SemanticError::InvalidPattern(format!("duplicate binding {}",n)));}},
+            Pattern::Constructor(_,parts)=>for part in parts{Self::validate_pattern_bindings(part,names)?;},
+            _=>{}
+        }
+        Ok(())
+    }
+
     fn bind_pattern_types(&mut self, pattern: &Pattern, ty: &TypeSpec) -> Result<(), SemanticError> {
+        if let Pattern::Constructor(name,parts)=pattern {
+            if let Some(c)=self.constructors.entries.get(name).cloned() {
+                let normalized=self.constructors.normalize(ty);
+                let (owner,args)=match &normalized {TypeSpec::Primitive(n)=>(n,vec![]),TypeSpec::Generic(n,a)=>(n,a.clone()),_=>return Err(SemanticError::InvalidPattern(name.clone()))};
+                if *owner!=c.owner || parts.len()!=c.fields.len() {return Err(SemanticError::InvalidPattern(format!("{} does not match {:?}",name,ty)));}
+                let sub=c.type_params.iter().cloned().zip(args).collect();
+                for (part,field) in parts.iter().zip(&c.fields) {self.bind_pattern_types(part,&generics::substitute(field,&sub))?;}
+                return Ok(());
+            }
+        }
         match (pattern, ty) {
             (Pattern::Identifier(name), _) => { self.symbol_table.insert(name.clone(), ty.clone()); }
             (Pattern::Constructor(name, parts), TypeSpec::Generic(list, args))
@@ -290,10 +335,11 @@ impl TypeChecker {
     }
 
     fn function_scheme(&self, name: &str) -> Option<(Vec<String>,TypeSpec)> {
+        if let Some(c)=self.constructors.entries.get(name) {return Some((c.type_params.clone(),c.signature()));}
         let function=self.functions.get(name)?;
         if name=="std.empty" {return Some((vec!["T".into()],TypeSpec::Function(vec![],Box::new(TypeSpec::Generic("List".into(),vec![TypeSpec::Primitive("T".into())])))));}
         if name=="std.prepend" {let t=TypeSpec::Primitive("T".into());return Some((vec!["T".into()],TypeSpec::Function(vec![t.clone(),TypeSpec::Generic("List".into(),vec![t.clone()])],Box::new(TypeSpec::Generic("List".into(),vec![t])))));}
-        Some((function.type_params.clone(),TypeSpec::Function(function.params.iter().map(|p|p.param_type.clone()).collect(),Box::new(function.return_type.clone().unwrap_or(TypeSpec::Primitive("Unknown".into()))))))
+        Some((function.type_params.clone(),self.constructors.normalize(&TypeSpec::Function(function.params.iter().map(|p|p.param_type.clone()).collect(),Box::new(function.return_type.clone().unwrap_or(TypeSpec::Primitive("Unknown".into())))))))
     }
 
     fn generic_target<'a>(&self, target: &'a Expr) -> Option<(Vec<String>,TypeSpec,Option<&'a [TypeSpec]>)> {
@@ -320,13 +366,45 @@ impl TypeChecker {
         if inputs.len()!=args.len() {return Err(SemanticError::ArgumentCountMismatch {function:"function".into(),expected:inputs.len(),found:args.len()});}
         for (index,(ty,arg)) in inputs.iter().zip(args).enumerate() {
             let actual=self.check_expr(arg,Some(ty))?;
-            if !Self::compatible(ty,&actual) || Self::contains_unknown_type(&actual) {return Err(SemanticError::FunctionArgumentTypeMismatch {index:index+1,expected:ty.clone(),actual});}
+            if !self.compatible(ty,&actual) || Self::contains_unknown_type(&actual) {return Err(SemanticError::FunctionArgumentTypeMismatch {index:index+1,expected:ty.clone(),actual});}
         }
         Ok(*result)
     }
 
+    fn capture_has_open_type(&self,ty:&TypeSpec)->bool {
+        match ty {TypeSpec::Primitive(n)=>self.type_variables.contains(n),TypeSpec::Generic(_,args)=>args.iter().any(|a|self.capture_has_open_type(a)),TypeSpec::Ref(t)=>self.capture_has_open_type(t),TypeSpec::Function(_,_)=>false}
+    }
+    fn check_closure(&self,params:&[Param],return_type:&TypeSpec,body:&[Statement])->Result<TypeSpec,SemanticError>{
+        for p in params {self.validate_type(&p.param_type)?;}self.validate_type(return_type)?;
+        Self::validate_non_loop_body(body)?;
+        let mut checker=self.clone();checker.symbol_table.clear();
+        for name in crate::semantic::closures::free_variables(params,body) {
+            if let Some(ty)=self.symbol_table.get(&name) {
+                if !self.copyable(ty,&mut HashSet::new()) || self.capture_has_open_type(ty) {
+                    return Err(SemanticError::UncopyableCapture(format!("{}: {:?}",name,ty)));
+                }
+                checker.symbol_table.insert(name,ty.clone());
+            }
+        }
+        for p in params {checker.symbol_table.insert(p.name.clone(),p.param_type.clone());}
+        checker.check_function_value_body(body,Some(return_type))?;
+        for stmt in body {checker.check_stmt(stmt,true)?;}
+        Ok(TypeSpec::Function(params.iter().map(|p|p.param_type.clone()).collect(),Box::new(return_type.clone())))
+    }
+
     fn check_expr(&self, expr: &Expr, expected: Option<&TypeSpec>) -> Result<TypeSpec,SemanticError> {
+        let normalized=expected.map(|t|self.constructors.normalize(t));let expected=normalized.as_ref();
+        if let Some(name)=Self::qualified_name(expr) {
+            if !self.symbol_table.contains_key(&name) && !self.qualified_name_shadowed(&name) {
+                if self.constructors.ambiguous.contains(&name) {return Err(SemanticError::InvalidExpression(format!("ambiguous constructor {}; qualify it with the enum name",name)));}
+                if let Some(c)=self.constructors.entries.get(&name) {
+                    if c.fields.is_empty() {return self.check_call(&c.signature(),&c.type_params,None,&[],expected);}
+                    if c.type_params.is_empty() {return Ok(c.signature());}
+                }
+            }
+        }
         match expr {
+            Expr::Closure {params,return_type,body} => return self.check_closure(params,return_type,body),
             Expr::FunctionCall {name,args} => {
                 if self.qualified_name_shadowed(name) {return Err(SemanticError::UndeclaredSymbol(name.clone()));}
                 if name.starts_with("std.") && !self.functions.contains_key(name) {return Err(SemanticError::MissingStandardLibraryImport(name.clone()));}
@@ -347,7 +425,11 @@ impl TypeChecker {
                 for ty in type_args {self.validate_type(ty)?;}
                 let Some((parameters,signature,_))=self.generic_target(target) else {return Err(SemanticError::GenericTypeError("only named generic functions can be specialized".into()));};
                 if parameters.is_empty() {return Err(SemanticError::GenericTypeError("function has no type parameters".into()));}
-                return generics::specialize(&signature,&parameters,type_args);
+                let specialized=generics::specialize(&signature,&parameters,type_args)?;
+                if Self::qualified_name(target).and_then(|n|self.constructors.entries.get(&n)).is_some_and(|c|c.fields.is_empty()) {
+                    if let TypeSpec::Function(_,result)=specialized {return Ok(*result);}
+                }
+                return Ok(specialized);
             }
             Expr::Variable(_) | Expr::MemberAccess {..} => {
                 if let Some((parameters,signature,_))=self.generic_target(expr) {
@@ -363,6 +445,11 @@ impl TypeChecker {
                             if name.starts_with("std.") && !self.qualified_name_shadowed(&name) {return Err(SemanticError::MissingStandardLibraryImport(name));}
                         }
                         self.check_expr(target,None)?;
+                        let receiver=self.infer_type(target);
+                        let enum_name=match &receiver {TypeSpec::Primitive(n)|TypeSpec::Generic(n,_)=>Some(n),_=>None};
+                        if enum_name.and_then(|n|self.types.get(n)).is_some_and(|t|!t.variants.is_empty()) {
+                            return Err(SemanticError::InvalidExpression("enum payloads must be accessed through match patterns".into()));
+                        }
                     }
                     _=>{}
                 }
@@ -370,13 +457,13 @@ impl TypeChecker {
             Expr::BinaryOp {op,left,right} => {
                 let a=self.check_expr(left,None)?; let b=self.check_expr(right,None)?;
                 let int=TypeSpec::Primitive("Int".into());
-                let valid=if matches!(op.as_str(),"=="|"!=") {Self::compatible(&a,&b)} else {Self::compatible(&int,&a)&&Self::compatible(&int,&b)};
+                let valid=if matches!(op.as_str(),"=="|"!=") {self.compatible(&a,&b)} else {self.compatible(&int,&a)&&self.compatible(&int,&b)};
                 if !valid {return Err(SemanticError::InvalidExpression(format!("operator {} on {:?} and {:?}",op,a,b)));}
             }
             Expr::RefCreate(inner) => {let inner_expected=match expected {Some(TypeSpec::Ref(ty))=>Some(ty.as_ref()),_=>None};return Ok(TypeSpec::Ref(Box::new(self.check_expr(inner,inner_expected)?)));}
             Expr::ListLiteral(items) => {
                 if let Some(TypeSpec::Generic(name,args))=expected {if name=="List" && args.len()==1 {
-                    for (index,item) in items.iter().enumerate() {let actual=self.check_expr(item,Some(&args[0]))?;if !Self::compatible(&args[0],&actual) {return Err(SemanticError::FunctionArgumentTypeMismatch {index:index+1,expected:args[0].clone(),actual});}}
+                    for item in items {let actual=self.check_expr(item,Some(&args[0]))?;if !self.compatible(&args[0],&actual) {return Err(SemanticError::FunctionReturnTypeMismatch {expected:args[0].clone(),actual});}}
                     return Ok(expected.unwrap().clone());
                 }}
                 for item in items {self.check_expr(item,None)?;}
@@ -406,27 +493,24 @@ impl TypeChecker {
                     self.symbol_table.insert(name.clone(), ty);
                 }
                 Statement::Spawn(expr) => {
-                    if let Expr::FunctionCall { name, args } = expr {
-                        if self.symbol_table.contains_key(name) || self.qualified_name_shadowed(name) {
-                            return Err(SemanticError::InvalidExpression("spawn requires an unshadowed named routine or loop".into()));
+                    let (name,args,explicit) = match expr {
+                        Expr::FunctionCall {name,args} => (name.clone(),args,None),
+                        Expr::IndirectCall {target,args} => {
+                            let Expr::Specialize {target,type_args} = target.as_ref() else {return Err(SemanticError::InvalidExpression("spawn requires a named routine".into()));};
+                            let name=Self::qualified_name(target).ok_or_else(|| SemanticError::InvalidExpression("spawn requires a named routine".into()))?;
+                            (name,args,Some(type_args.as_slice()))
                         }
-                        for arg in args {
-                            self.check_function_value_expr(arg)?;
-                            if !self.expression_copyable(arg) {
-                                return Err(SemanticError::UncopyableSpawnArgument(name.clone()));
-                            }
-                        }
-                        if let Some(routine) = self.routines.get(name) {
-                            let parameters: Vec<_> = routine.params.iter().map(|p| p.param_type.clone()).collect();
-                            self.check_argument_types(name, &parameters, args)?;
-                        } else if self.loops.contains(name) && args.len() > 1 {
-                            return Err(SemanticError::LoopSignalArgumentCount { loop_name: name.clone(), found: args.len() });
-                        } else if !self.loops.contains(name) {
-                            return Err(SemanticError::UndeclaredSymbol(format!("spawn target {} is not a routine or loop", name)));
-                        }
-                    } else {
-                        return Err(SemanticError::InvalidExpression("spawn requires a named routine or loop call".into()));
-                    }
+                        _ => return Err(SemanticError::InvalidExpression("spawn requires a named routine or loop call".into())),
+                    };
+                    if self.symbol_table.contains_key(&name) || self.qualified_name_shadowed(&name) {return Err(SemanticError::InvalidExpression("spawn target is shadowed".into()));}
+                    if let Some(routine)=self.routines.get(&name) {
+                        let signature=TypeSpec::Function(routine.params.iter().map(|p|p.param_type.clone()).collect(),Box::new(TypeSpec::Primitive("Unit".into())));
+                        self.check_call(&signature,&routine.type_params,explicit,args,None)?;
+                    } else if self.loops.contains(&name) {
+                        if explicit.is_some() {return Err(SemanticError::GenericTypeError("loops have no type parameters".into()));}
+                        if args.len()>1 {return Err(SemanticError::LoopSignalArgumentCount{loop_name:name.clone(),found:args.len()});}
+                    } else {return Err(SemanticError::UndeclaredSymbol(name));}
+                    for arg in args { if !self.expression_copyable(arg) {return Err(SemanticError::UncopyableSpawnArgument(name.clone()));} }
                 }
                 Statement::ExprStmt(expr) => { self.check_expr(expr,tail_type)?; }
                 Statement::Throw(expr) | Statement::MemorySet { value: expr, .. } | Statement::Signal { payload: expr, .. } => self.check_function_value_expr(expr)?,
@@ -447,11 +531,13 @@ impl TypeChecker {
                     let target_type = self.infer_type(target);
                     for case in cases {
                         self.symbol_table = scope.clone();
+                        Self::validate_pattern_bindings(&case.pattern,&mut HashSet::new())?;
                         self.bind_pattern_types(&case.pattern, &target_type)?;
                         let result = self.check_function_value_body(&case.body, tail_type);
                         self.symbol_table = scope.clone();
                         result?;
                     }
+                    if !self.exhaustive(cases,&target_type) {return Err(if tail_type.is_some(){SemanticError::MissingFunctionReturn}else{SemanticError::NonExhaustiveMatch(format!("{:?}",target_type))});}
                 }
                 Statement::TryCatch { try_body, error_name, catch_body } => {
                     let scope = self.symbol_table.clone();
@@ -476,13 +562,14 @@ impl TypeChecker {
                     }
                 }
                 Some(Statement::Match { target, cases }) if !cases.is_empty() => {
-                    if !Self::exhaustive(cases, &self.infer_type(target)) {
+                    if !self.exhaustive(cases, &self.infer_type(target)) {
                         return Err(SemanticError::MissingFunctionReturn);
                     }
                     let scope = self.symbol_table.clone();
                     let target_type = self.infer_type(target);
                     for case in cases {
                         self.symbol_table = scope.clone();
+                        Self::validate_pattern_bindings(&case.pattern,&mut HashSet::new())?;
                         self.bind_pattern_types(&case.pattern, &target_type)?;
                         let result = self.check_function_value_body(&case.body, Some(expected));
                         if let Err(error) = result {
@@ -541,6 +628,7 @@ impl TypeChecker {
 
     fn reject_receive(expr: &Expr) -> Result<(), SemanticError> {
         match expr {
+            Expr::Closure {body,..} => Self::validate_non_loop_body(body),
             Expr::ReceiveSignal => Err(SemanticError::ReceiveOutsideLoop),
             Expr::FunctionCall { args, .. } => {
                 for arg in args { Self::reject_receive(arg)?; }
@@ -566,6 +654,7 @@ impl TypeChecker {
 
     fn reject_memory(expr: &Expr) -> Result<(), SemanticError> {
         match expr {
+            Expr::Closure {body,..} => Self::validate_non_loop_body(body),
             Expr::MemoryGet(_) => Err(SemanticError::MemoryOutsideLoop),
             Expr::FunctionCall { args, .. } => { for arg in args { Self::reject_memory(arg)?; } Ok(()) }
             Expr::IndirectCall { target, args } => {
@@ -704,6 +793,7 @@ impl TypeChecker {
                         expression_is_imported(item, functions)?;
                     }
                 }
+                Expr::Closure{body,..} => for stmt in body {TypeChecker::validate_standard_library_calls(stmt,functions)?;},
                 Expr::IntLiteral(_) | Expr::StringLiteral(_) | Expr::Variable(_) | Expr::TypeOf(_) | Expr::ReceiveSignal | Expr::MemoryGet(_) => {}
             }
             Ok(())
@@ -745,6 +835,10 @@ impl TypeChecker {
 
     /// Compute the static type of an expression.
     pub fn infer_type(&self, expr: &Expr) -> TypeSpec {
+        if let Some(name)=Self::qualified_name(expr) {if !self.symbol_table.contains_key(&name) {if let Some(c)=self.constructors.entries.get(&name) {return if c.fields.is_empty(){self.check_expr(expr,None).unwrap_or(TypeSpec::Primitive("Unknown".into()))}else{c.signature()};}}}
+        self.constructors.normalize(&self.infer_type_inner(expr))
+    }
+    fn infer_type_inner(&self, expr: &Expr) -> TypeSpec {
         match expr {
             Expr::IntLiteral(_) => TypeSpec::Primitive("Int".to_string()),
             Expr::StringLiteral(_) => TypeSpec::Primitive("String".to_string()),
@@ -774,13 +868,13 @@ impl TypeChecker {
                 )))
                 .unwrap_or(TypeSpec::Primitive("Unknown".to_string())),
             Expr::FunctionCall { name, .. } if self.qualified_name_shadowed(name) => TypeSpec::Primitive("Unknown".into()),
-            Expr::FunctionCall { name, .. } if !self.symbol_table.contains_key(name) && self.function_scheme(name).is_some_and(|(parameters,_)|!parameters.is_empty()) => self.check_expr(expr,None).unwrap_or(TypeSpec::Primitive("Unknown".into())),
+            Expr::FunctionCall { name, .. } if !self.symbol_table.contains_key(name) && self.function_scheme(name).is_some_and(|(parameters,_)|!parameters.is_empty() || self.constructors.entries.contains_key(name)) => self.check_expr(expr,None).unwrap_or(TypeSpec::Primitive("Unknown".into())),
             Expr::FunctionCall { name, .. } => match self.symbol_table.get(name) {
                 Some(TypeSpec::Function(_, result)) => *result.clone(),
                 Some(_) => TypeSpec::Primitive("Unknown".into()),
                 None => self.functions.get(name).and_then(|func| func.return_type.clone()).unwrap_or_else(|| TypeSpec::Primitive("Unknown".into())),
             },
-            Expr::Specialize {..} => self.check_expr(expr,None).unwrap_or(TypeSpec::Primitive("Unknown".into())),
+            Expr::Closure {..} | Expr::Specialize {..} => self.check_expr(expr,None).unwrap_or(TypeSpec::Primitive("Unknown".into())),
             Expr::IndirectCall { target, .. } if self.generic_target(target).is_some() => self.check_expr(expr,None).unwrap_or(TypeSpec::Primitive("Unknown".into())),
             Expr::IndirectCall { target, .. } => match self.infer_type(target) {
                 TypeSpec::Function(_, result) => *result,

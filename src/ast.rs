@@ -42,6 +42,7 @@ pub enum Pattern {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expr {
+    Closure { params: Vec<Param>, return_type: TypeSpec, body: Vec<Statement> },
     IntLiteral(i64),
     StringLiteral(String),
     ListLiteral(Vec<Expr>),
@@ -133,11 +134,19 @@ pub struct LoopDecl {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnumVariant {
+    pub name: String,
+    pub fields: Vec<TypeSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TypeDecl {
     pub name: String,
     #[serde(default)]
     pub type_params: Vec<String>,
     pub fields: Vec<StructField>,
+    #[serde(default)]
+    pub variants: Vec<EnumVariant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

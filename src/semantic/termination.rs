@@ -225,6 +225,9 @@ impl TerminationChecker {
         sub_components: &HashSet<String>,
     ) -> Result<(), SemanticError> {
         match expr {
+            Expr::Closure{body,..}=>{
+                Self::check_body_termination(body,&crate::semantic::closures::identity(expr),&HashSet::new())?;
+            },
             Expr::IndirectCall { target, args } => {
                 if let Expr::Specialize { target: named, .. } = target.as_ref() {
                     if let Expr::Variable(name) = named.as_ref() {
@@ -326,6 +329,9 @@ impl TerminationChecker {
         sub_components: &HashSet<String>,
     ) -> Result<(), SemanticError> {
         match expr {
+            Expr::Closure{body,..}=>{
+                Self::check_body_termination(body,&crate::semantic::closures::identity(expr),&HashSet::new())?;
+            },
             Expr::IndirectCall { target, args } => {
                 if let Expr::Specialize { target: named, .. } = target.as_ref() {
                     if let Expr::Variable(name) = named.as_ref() {

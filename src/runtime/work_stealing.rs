@@ -310,7 +310,7 @@ impl WorkStealingPool {
             }
             Statement::Match { target, cases } => {
                 let target = value!(target);
-                let Some(case) = cases.iter().find(|case| SignalRouter::pattern_matches(&case.pattern, &target)) else { return ExecutionControl::Failure(EvaluationFailure::Invalid); };
+                let Some(case) = cases.iter().find(|case| signal_router.pattern_matches(&case.pattern, &target)) else { return ExecutionControl::Failure(EvaluationFailure::Invalid); };
                 let mut local_values = variable_values.clone();
                 let mut local_types = variable_types.clone();
                 SignalRouter::bind_pattern(&case.pattern, &target, &mut local_values);

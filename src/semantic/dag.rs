@@ -25,7 +25,7 @@ impl CallGraphValidator {
         let mut nodes: Vec<_> = self.adjacency_list.keys().collect();
         nodes.sort();
         for node in nodes {
-            if self.cycle(node,&mut visited,&mut stack) { return Err(SemanticError::CallGraphCycle(node.clone())); }
+            if self.cycle(node,&mut visited,&mut stack) { return Err(SemanticError::CallGraphCycle(crate::semantic::closures::display_name(node).into())); }
         }
         Ok(())
     }

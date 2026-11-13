@@ -115,8 +115,9 @@ impl ComplexityAnalyzer {
         // Populate the cache independently of declaration order. The call
         // graph has already been validated as acyclic apart from structural
         // self recursion, so at most one pass per function propagates costs.
+        let closures=crate::semantic::closures::collect(program);
         self.cache.clear();
-        for _ in 0..program.declarations.len() {
+        for _ in 0..program.declarations.len()+closures.len() {
             for decl in &program.declarations {
                 if let TopLevelDecl::Func(f) = decl {
                     self.ignored_function = Some(f.name.clone());
@@ -126,6 +127,12 @@ impl ComplexityAnalyzer {
                         self.complexity_of_body(&f.body, &recursive_funcs)
                     };
                     self.cache.insert(f.name.clone(), cost);
+                }
+            }
+            for expr in &closures {
+                if let Expr::Closure{body,..}=expr {
+                    let name=crate::semantic::closures::identity(expr);self.ignored_function=Some(name.clone());
+                    let cost=self.complexity_of_body(body,&recursive_funcs);self.cache.insert(name,cost);
                 }
             }
         }

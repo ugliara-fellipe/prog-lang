@@ -18,6 +18,7 @@ importItemList
 
 topLevelDecl
     : typeDecl
+    | enumDecl
     | funcDecl
     | routineDecl
     | loopDecl
@@ -25,6 +26,14 @@ topLevelDecl
 
 typeDecl
     : 'type' ID typeParams? '{' structField (',' structField)* ','? '}'
+    ;
+
+enumDecl
+    : 'enum' ID typeParams? '{' enumVariant (',' enumVariant)* ','? '}'
+    ;
+
+enumVariant
+    : ID ('(' (typeSpec (',' typeSpec)* ','?)? ')')?
     ;
 
 structField
@@ -152,7 +161,7 @@ matchCase
     ;
 
 pattern
-    : ID ('(' pattern (',' pattern)* ')')?
+    : ID ('.' ID)* ('(' (pattern (',' pattern)*)? ')')?
     ;
 
 exprStmt
@@ -177,8 +186,13 @@ argList
     : expr (',' expr)*
     ;
 
+closureExpr
+    : '|' paramList? '|' '->' typeSpec block
+    ;
+
 primary
-    : ID
+    : closureExpr
+    | ID
     | INT
     | STRING
     | '(' expr ')'
@@ -194,6 +208,7 @@ listLiteral
 // ==========================================
 
 TYPE_KW    : 'type' ;
+ENUM_KW    : 'enum' ;
 FUNC_KW    : 'func' ;
 ROUTINE_KW : 'routine' ;
 LET_KW     : 'let' ;

@@ -4,10 +4,9 @@ Este documento registra o modelo implementado para o item 6 de
 [TODO.md](TODO.md). O compilador e o runtime aceitam funções nomeadas sem
 captura; os testes verificam fluxo, tipos, execução, terminação e custo.
 
-O escopo inicial compreende funções **nomeadas e sem captura**. Elas podem ser
-passadas, retornadas, copiadas e chamadas. Closures que capturam variáveis
-continuam fora desse escopo, no item 7 do TODO. Tipos genéricos também são um
-item separado.
+O núcleo inicial compreende funções **nomeadas e sem captura**. Elas podem ser
+passadas, retornadas, copiadas e chamadas. Esse modelo foi estendido a closures
+com captura por valor, descritas em [CLOSURES.md](CLOSURES.md). A tipagem genérica está descrita em [GENERICOS.md](GENERICOS.md).
 
 ## Tipos e chamadas
 
@@ -152,8 +151,8 @@ routine main() {
 Também são aceitas referências qualificadas, como `pacote.funcao`, e listas
 homogêneas, como `List[(Int) -> Int]`. Os retornos de funções utilizadas como
 valores devem possuir assinatura conhecida. Use funções nomeadas e anotações
-explícitas para os parâmetros e o retorno; lambdas, captura e polimorfismo
-paramétrico continuam fora deste item.
+explícitas para os parâmetros e o retorno; a sintaxe e as regras de captura das closures estão em [CLOSURES.md](CLOSURES.md). A tipagem paramétrica está
+descrita em [GENERICOS.md](GENERICOS.md).
 
 `spawn` tem como alvo uma rotina ou um loop nomeado. Valores de função são
 argumentos copiáveis dessas rotinas. Declarações `let` podem receber valores de

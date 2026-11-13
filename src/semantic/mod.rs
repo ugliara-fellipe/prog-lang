@@ -1,3 +1,5 @@
+pub mod closures;
+pub mod adt;
 pub mod dag;
 pub mod flow;
 pub mod generics;
@@ -10,6 +12,10 @@ use thiserror::Error;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum SemanticError {
+    #[error("Closure capture cannot be copied by value: {0}")]
+    UncopyableCapture(String),
+    #[error("Non-exhaustive match for {0}")]
+    NonExhaustiveMatch(String),
     #[error("Generic type error: {0}")]
     GenericTypeError(String),
     #[error("Invalid expression: {0}")]

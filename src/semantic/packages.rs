@@ -69,8 +69,14 @@ impl PackageManager {
                 return Err(SemanticError::PackageError(format!("Item '{}' not found in package '{}'", name, pkg_name)));
             }
         }
-        let names: HashMap<String, String> = pkg_prog.declarations.iter().filter_map(Self::decl_name)
+        let mut names: HashMap<String, String> = pkg_prog.declarations.iter().filter_map(Self::decl_name)
             .filter(|name| local.contains(*name)).map(|name| (name.into(), format!("{}.{}", pkg_name, name))).collect();
+        let enum_names:HashMap<String,String>=pkg_prog.declarations.iter().filter_map(|d|match d {TopLevelDecl::Type(t) if local.contains(&t.name) && !t.variants.is_empty()=>Some((t.name.clone(),names[&t.name].clone())),_=>None}).collect();
+        let mut variant_names:HashMap<String,Vec<String>>=HashMap::new();
+        for decl in &pkg_prog.declarations {if let TopLevelDecl::Type(t)=decl {if let Some(full)=enum_names.get(&t.name) {for v in &t.variants {
+            let qualified=format!("{}.{}",full,v.name);names.insert(format!("{}.{}",t.name,v.name),qualified.clone());variant_names.entry(v.name.clone()).or_default().push(qualified);
+        }}}}
+        for (short,full) in variant_names {if full.len()==1 {names.insert(short,full[0].clone());}}
         let mut result = Vec::new();
         for decl in &pkg_prog.declarations {
             let Some(name) = Self::decl_name(decl) else { continue; };
@@ -78,6 +84,7 @@ impl PackageManager {
             // aliases point at bodies whose references stay inside the package.
             if !local.contains(name) { result.push(decl.clone()); continue; }
             let mut qualified = decl.clone();
+            Self::qualify_decl_types(&mut qualified,&enum_names);
             match &mut qualified {
                 TopLevelDecl::Func(f) => { Self::qualify_body(&mut f.body, &names, &f.params.iter().map(|p| p.name.clone()).collect()); f.name = names[name].clone(); }
                 TopLevelDecl::Routine(r) => { Self::qualify_body(&mut r.body, &names, &r.params.iter().map(|p| p.name.clone()).collect()); r.name = names[name].clone(); }
@@ -115,6 +122,10 @@ impl PackageManager {
 
     fn qualify_expr(expr: &mut Expr, names: &HashMap<String, String>, bound: &HashSet<String>) {
         match expr {
+            Expr::Closure{params,body,..}=>{
+                let mut local=bound.clone();local.extend(params.iter().map(|p|p.name.clone()));
+                Self::qualify_body(body,names,&local);
+            },
             Expr::Variable(name) => if !bound.contains(name) { if let Some(full) = names.get(name) { *name = full.clone(); } },
             Expr::FunctionCall { name, args } => { if !bound.contains(name) { if let Some(full) = names.get(name) { *name = full.clone(); } } for arg in args { Self::qualify_expr(arg, names, bound); } }
             Expr::IndirectCall { target, args } => { Self::qualify_expr(target, names, bound); for arg in args { Self::qualify_expr(arg, names, bound); } }
@@ -122,6 +133,48 @@ impl PackageManager {
             Expr::MemberAccess { target, .. } | Expr::Specialize { target, .. } | Expr::RefCreate(target) => Self::qualify_expr(target, names, bound),
             Expr::ListLiteral(items) => for item in items { Self::qualify_expr(item, names, bound); },
             _ => {}
+        }
+    }
+
+    fn qualify_pattern(pattern:&mut Pattern,names:&HashMap<String,String>) {
+        if let Pattern::Constructor(name,parts)=pattern {if let Some(full)=names.get(name){*name=full.clone();}for part in parts {Self::qualify_pattern(part,names);}}
+    }
+    fn qualify_type(ty:&mut TypeSpec,names:&HashMap<String,String>) {
+        match ty {
+            TypeSpec::Primitive(n)=>{if let Some(full)=names.get(n){*n=full.clone();}},
+            TypeSpec::Generic(n,args)=>{if let Some(full)=names.get(n){*n=full.clone();}for arg in args {Self::qualify_type(arg,names);}},
+            TypeSpec::Function(args,r)=>{for arg in args {Self::qualify_type(arg,names);}Self::qualify_type(r,names);},
+            TypeSpec::Ref(inner)=>Self::qualify_type(inner,names),
+        }
+    }
+    fn qualify_expr_types(expr:&mut Expr,names:&HashMap<String,String>){
+        match expr{
+            Expr::Closure{params,return_type,body}=>{for p in params{Self::qualify_type(&mut p.param_type,names);}Self::qualify_type(return_type,names);Self::qualify_body_types(body,names);},
+            Expr::FunctionCall{args,..}|Expr::ListLiteral(args)=>for arg in args{Self::qualify_expr_types(arg,names);},
+            Expr::IndirectCall{target,args}=>{Self::qualify_expr_types(target,names);for arg in args{Self::qualify_expr_types(arg,names);}},
+            Expr::Specialize{target,type_args}=>{for t in type_args{Self::qualify_type(t,names);}Self::qualify_expr_types(target,names);},
+            Expr::RefCreate(t)|Expr::MemberAccess{target:t,..}=>Self::qualify_expr_types(t,names),
+            Expr::BinaryOp{left,right,..}=>{Self::qualify_expr_types(left,names);Self::qualify_expr_types(right,names);},_=>{}
+        }
+    }
+
+    fn qualify_body_types(body:&mut [Statement],names:&HashMap<String,String>) {
+        for stmt in body {match stmt {
+            Statement::VarDecl{type_annot,value,..}=>{if let Some(ty)=type_annot{Self::qualify_type(ty,names);}Self::qualify_expr_types(value,names);},
+            Statement::ExprStmt(e)|Statement::Spawn(e)|Statement::Throw(e)|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>Self::qualify_expr_types(e,names),
+            Statement::ForLoop{collection,body,..}=>{Self::qualify_expr_types(collection,names);Self::qualify_body_types(body,names);},
+            Statement::Match{target,cases}=>{Self::qualify_expr_types(target,names);for case in cases{Self::qualify_body_types(&mut case.body,names);}},
+            Statement::TryCatch{try_body,catch_body,..}=>{Self::qualify_body_types(try_body,names);Self::qualify_body_types(catch_body,names);},
+            _=>{}
+        }}
+    }
+    fn qualify_decl_types(decl:&mut TopLevelDecl,names:&HashMap<String,String>) {
+        match decl {
+            TopLevelDecl::Func(f)=>{for p in &mut f.params {Self::qualify_type(&mut p.param_type,names);}if let Some(r)=&mut f.return_type{Self::qualify_type(r,names);}Self::qualify_body_types(&mut f.body,names);},
+            TopLevelDecl::Routine(r)=>{for p in &mut r.params{Self::qualify_type(&mut p.param_type,names);}Self::qualify_body_types(&mut r.body,names);},
+            TopLevelDecl::Loop(l)=>Self::qualify_body_types(&mut l.body,names),
+            TopLevelDecl::Type(t)=>{for f in &mut t.fields{Self::qualify_type(&mut f.field_type,names);}for v in &mut t.variants{for f in &mut v.fields{Self::qualify_type(f,names);}}},
+            _=>{}
         }
     }
 
@@ -137,7 +190,7 @@ impl PackageManager {
                 Statement::ExprStmt(e) | Statement::Spawn(e) | Statement::Throw(e) | Statement::MemorySet { value: e, .. } => Self::qualify_expr(e, names, &bound),
                 Statement::Signal { loop_name, payload } => { if let Some(full) = names.get(loop_name) { *loop_name = full.clone(); } Self::qualify_expr(payload, names, &bound); }
                 Statement::ForLoop { var_name, collection, body } => { Self::qualify_expr(collection, names, &bound); let mut local = bound.clone(); local.insert(var_name.clone()); Self::qualify_body(body, names, &local); }
-                Statement::Match { target, cases } => { Self::qualify_expr(target, names, &bound); for case in cases { let mut local = bound.clone(); Self::pattern_names(&case.pattern, &mut local); Self::qualify_body(&mut case.body, names, &local); } }
+                Statement::Match { target, cases } => { Self::qualify_expr(target, names, &bound); for case in cases { Self::qualify_pattern(&mut case.pattern,names); let mut local = bound.clone(); Self::pattern_names(&case.pattern, &mut local); Self::qualify_body(&mut case.body, names, &local); } }
                 Statement::TryCatch { try_body, error_name, catch_body } => { Self::qualify_body(try_body, names, &bound); let mut local = bound.clone(); local.insert(error_name.clone()); Self::qualify_body(catch_body, names, &local); }
                 Statement::Terminate => {}
             }

@@ -1,0 +1,21 @@
+import std
+enum Outcome<T> { Ok(T), Err(String) }
+enum Tree<T> { Leaf(T), Branch(Tree[T], Tree[T]) }
+enum Flag { On, Off }
+func unwrap<T>(value: Outcome[T], fallback: T) -> T {
+    match value { Ok(x) => x, Err(reason) => fallback }
+}
+func sum(tree: Tree[Int]) -> Int {
+    match tree { Leaf(x) => x, Branch(left, right) => sum(left) + sum(right) }
+}
+routine Worker(result: Outcome[Int]) {
+    match result { Ok(x) => std.log("worker", x), Err(reason) => std.log(reason) }
+}
+routine main() {
+    let result: Outcome[Int] = Ok(7)
+    std.log(unwrap(result, 0))
+    std.log(unwrap(Err<Int>("bad"), 9))
+    std.log(sum(Branch(Leaf(2), Leaf(3))))
+    match On { On => std.log("on"), Off => std.log("off") }
+    spawn Worker(result)
+}

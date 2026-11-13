@@ -2,21 +2,6 @@
 
 A numeração original foi mantida para preservar as referências entre documentos.
 
-## 3. Tipagem genérica (paramétrica)
-
-**Explanation:** Permite funções reutilizáveis sobre diferentes tipos sem perder a segurança de cópia por valor.
-**Example:** `func map<T, U>(list: List[T], f: (T) -> U) -> List[U] { … }`
-
-## 4. Algebraic Data Types (enum / sum types)
-
-**Explanation:** Define tipos discriminados que o compilador verifica exhaustividade.
-**Example:** `enum Result { Ok(Int), Err(String) }`
-
-## 7. Closures (captura por valor)
-
-**Explanation:** Captura apenas valores copiados, evitando referências compartilhadas.
-**Example:** `let inc = |x: Int| -> Int { x + 1 }`
-
 ## 8. Tipos opcionais / Result
 
 **Explanation:** Representam ausência ou erro de forma segura, sem `null`.

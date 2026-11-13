@@ -58,7 +58,11 @@ impl FunctionFlow {
 
 struct Solver<'a> {
     program: &'a Program,
+    constructors: crate::semantic::adt::Constructors,
     functions: HashMap<String, &'a FuncDecl>,
+    closures: HashMap<String, &'a Expr>,
+    captures: HashMap<String, HashMap<String,Value>>,
+    closure_type_variables: Vec<String>,
     params: HashMap<String, Vec<Value>>,
     returns: HashMap<String, Value>,
     raised: HashMap<String, Value>,
@@ -77,7 +81,10 @@ impl<'a> Solver<'a> {
                 _ => {}
             }
         }
-        Self { program, functions, params, returns: HashMap::new(), raised: HashMap::new(), flow: FunctionFlow::default(), changed: false, unresolved: HashSet::new() }
+        let closures:HashMap<_,_>=crate::semantic::closures::collect(program).into_iter().map(|e|(crate::semantic::closures::identity(e),e)).collect();
+        for (name,expr) in &closures {if let Expr::Closure{params:args,..}=expr {params.insert(name.clone(),vec![Value::default();args.len()]);}}
+        let closure_type_variables=program.declarations.iter().flat_map(|d|match d{TopLevelDecl::Func(f)=>f.type_params.clone(),TopLevelDecl::Routine(r)=>r.type_params.clone(),_=>vec![]}).collect();
+        Self { program, closures, captures:HashMap::new(), closure_type_variables, constructors: crate::semantic::adt::Constructors::new(program), functions, params, returns: HashMap::new(), raised: HashMap::new(), flow: FunctionFlow::default(), changed: false, unresolved: HashSet::new() }
     }
     fn solve(&mut self) {
         loop {
@@ -94,6 +101,15 @@ impl<'a> Solver<'a> {
                 let mut scope = params.iter().zip(values).map(|(p,v)| (p.name.clone(),v)).collect();
                 let result = self.body(name, body, &mut scope);
                 self.changed |= self.returns.entry(name.clone()).or_default().merge(&result);
+            }
+            for (name,expr) in self.closures.clone() {
+                if let Some(mut scope)=self.captures.get(&name).cloned() {
+                    if let Expr::Closure{params,body,..}=expr {
+                        for (p,v) in params.iter().zip(self.params[&name].clone()){scope.insert(p.name.clone(),v);}
+                        let result=self.body(&name,body,&mut scope);
+                        self.changed |= self.returns.entry(name).or_default().merge(&result);
+                    }
+                }
             }
             if !self.changed { break; }
         }
@@ -115,14 +131,28 @@ impl<'a> Solver<'a> {
         }
     }
     fn candidates(&self, ty: &TypeSpec, type_params: &[String]) -> Value {
+        self.candidates_inner(ty,type_params,&mut HashSet::new())
+    }
+    fn candidates_inner(&self, ty:&TypeSpec,type_params:&[String],seen:&mut HashSet<String>)->Value {
+        let normalized=self.constructors.normalize(ty);
+        let (name,args)=match &normalized {TypeSpec::Primitive(n)=>(n.as_str(),vec![]),TypeSpec::Generic(n,args)=>(n.as_str(),args.clone()),_=>("",vec![])};
+        let constructors:Vec<_>=self.constructors.entries.values().filter(|c|c.owner==name).collect();
+        if !constructors.is_empty() && seen.insert(name.into()) {
+            let mut value=Value::default();
+            for c in constructors {let sub=c.type_params.iter().cloned().zip(args.iter().cloned()).collect();for field in &c.fields {
+                let field=crate::semantic::generics::substitute(field,&sub);let nested=self.candidates_inner(&field,type_params,seen);
+                value.contents.extend(nested.targets);value.contents.extend(nested.contents);value.contents_unknown |= nested.unknown || nested.contents_unknown;
+            }}
+            seen.remove(name);return value;
+        }
         match ty {
-            TypeSpec::Function(_, _) => Value { targets: self.functions.iter().filter(|(_, f)| Self::signature_shape_matches(ty,type_params,&Self::signature(f),&f.type_params)).map(|(name,_)| name.clone()).collect(), ..Value::default() },
+            TypeSpec::Function(_, _) => Value { targets: self.functions.iter().filter(|(_, f)| Self::signature_shape_matches(ty,type_params,&Self::signature(f),&f.type_params)).map(|(name,_)| name.clone()).chain(self.closures.iter().filter(|(_,e)|Self::signature_shape_matches(ty,type_params,&crate::semantic::closures::signature(e),&self.closure_type_variables)).map(|(name,_)|name.clone())).chain(self.constructors.entries.iter().filter(|(_,c)|Self::signature_shape_matches(ty,type_params,&c.signature(),&c.type_params)).map(|(name,_)|name.clone())).collect(), ..Value::default() },
             TypeSpec::Generic(_, args) => {
                 let mut result = Value::default();
-                for arg in args { let nested = self.candidates(arg,type_params); result.contents.extend(nested.targets); result.contents.extend(nested.contents); }
+                for arg in args { let nested = self.candidates_inner(arg,type_params,seen); result.contents.extend(nested.targets); result.contents.extend(nested.contents); }
                 result
             }
-            TypeSpec::Ref(inner) => self.candidates(inner,type_params),
+            TypeSpec::Ref(inner) => self.candidates_inner(inner,type_params,seen),
             // A type variable may itself be instantiated with a function or
             // a container of functions. Do not silently treat it as scalar.
             TypeSpec::Primitive(name) if type_params.contains(name) => Value { targets: self.functions.keys().cloned().collect(), contents: self.functions.keys().cloned().collect(), ..Value::default() },
@@ -140,10 +170,24 @@ impl<'a> Solver<'a> {
                 }
             }
         }
+        for (name,expr) in &self.closures {
+            if let Expr::Closure{params,..}=expr {
+                for (i,param) in params.iter().enumerate(){let value=&self.params[name][i];if value.targets.is_empty() && value.contents.is_empty() && !value.unknown {
+                    let fallback=self.candidates(&param.param_type,&self.closure_type_variables);self.params.get_mut(name).unwrap()[i].merge(&fallback);
+                }}
+            }
+        }
     }
     fn expr(&mut self, owner: &str, expr: &Expr, scope: &HashMap<String,Value>, spawn: bool) -> Value {
         match expr {
-            Expr::Variable(name) => scope.get(name).cloned().unwrap_or_else(|| if self.functions.contains_key(name) { Value::named(name) } else if name == "True" || name == "False" { Value::default() } else { Value::unknown() }),
+            Expr::Closure{params,body,..}=>{
+                let name=crate::semantic::closures::identity(expr);
+                self.changed |= !self.captures.contains_key(&name);
+                let captured=self.captures.entry(name.clone()).or_default();
+                for variable in crate::semantic::closures::free_variables(params,body){if let Some(value)=scope.get(&variable){self.changed |= captured.entry(variable).or_default().merge(value);}}
+                Value::named(&name)
+            },
+            Expr::Variable(name) => scope.get(name).cloned().unwrap_or_else(|| if self.functions.contains_key(name) || self.constructors.entries.get(name).is_some_and(|c|!c.fields.is_empty()) { Value::named(name) } else if self.constructors.entries.contains_key(name) {Value::default()} else if name == "True" || name == "False" { Value::default() } else { Value::unknown() }),
             Expr::FunctionCall { name, args } => {
                 let (target, indirect) = match scope.get(name) {
                     Some(value) => (value.clone(),true),
@@ -155,7 +199,7 @@ impl<'a> Solver<'a> {
             Expr::IndirectCall { target, args } => {
                 if let Expr::Specialize { target: named, .. } = target.as_ref() {
                     if let Some(name) = Self::qualified(named) {
-                        if !scope.contains_key(name.split('.').next().unwrap_or(&name)) && (self.functions.contains_key(&name) || (spawn && self.params.contains_key(&name))) {
+                        if !scope.contains_key(name.split('.').next().unwrap_or(&name)) && (self.functions.contains_key(&name) || self.constructors.entries.contains_key(&name) || (spawn && self.params.contains_key(&name))) {
                             return self.call(owner,expr,Value::named(&name),args,scope,spawn,false);
                         }
                     }
@@ -179,7 +223,8 @@ impl<'a> Solver<'a> {
                         return Value::unknown();
                     }
                     let name = format!("{}.{}",name,field);
-                    if self.functions.contains_key(&name) { return Value::named(&name); }
+                    if self.functions.contains_key(&name) || self.constructors.entries.get(&name).is_some_and(|c|!c.fields.is_empty()) { return Value::named(&name); }
+                    if self.constructors.entries.contains_key(&name) {return Value::default();}
                 }
                 self.expr(owner,target,scope,false);
                 Value::unknown()
@@ -198,17 +243,21 @@ impl<'a> Solver<'a> {
         self.changed |= before != self.flow.targets[&id].len();
         if indirect {
             self.flow.indirect.insert(id);
-            if target.unknown || target.targets.is_empty() { self.unresolved.insert(format!("{}: {:?}",owner,expr)); }
+            if target.unknown || target.targets.is_empty() { self.unresolved.insert(format!("{}: {:?}",crate::semantic::closures::display_name(owner),expr)); }
         }
         let mut result = Value::default();
         for name in &target.targets {
+            if self.constructors.entries.contains_key(name) {
+                for value in &values {result.contents.extend(value.targets.iter().cloned());result.contents.extend(value.contents.iter().cloned());result.contents_unknown |= value.unknown || value.contents_unknown;}
+                continue;
+            }
             if !spawn {
                 self.changed |= self.flow.calls.entry(owner.to_owned()).or_default().insert(name.clone());
                 if indirect { self.changed |= self.flow.indirect_calls.entry(owner.to_owned()).or_default().insert(name.clone()); }
             }
             if let Some(params) = self.params.get_mut(name) {
                 for (param,value) in params.iter_mut().zip(&values) { self.changed |= param.merge(value); }
-            } else if indirect { self.unresolved.insert(format!("{}: {} is not a registered function",owner,name)); }
+            } else if indirect { self.unresolved.insert(format!("{}: {} is not a registered function",crate::semantic::closures::display_name(owner),crate::semantic::closures::display_name(name))); }
             if let Some(raised) = self.raised.get(name).cloned() {
                 self.changed |= self.raised.entry(owner.to_owned()).or_default().merge(&raised);
             }
@@ -226,6 +275,7 @@ impl<'a> Solver<'a> {
         match pattern {
             Pattern::Identifier(name) => { scope.insert(name.clone(),value.clone()); }
             Pattern::Constructor(name,parts) if name == "Cons" && parts.len() == 2 => { Self::bind(&parts[0],&value.element(),scope); Self::bind(&parts[1],value,scope); }
+            Pattern::Constructor(_,parts) => for part in parts {Self::bind(part,&value.element(),scope);},
             _ => {}
         }
     }

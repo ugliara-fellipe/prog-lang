@@ -1,0 +1,17 @@
+import std
+func identity<T>(value: T) -> T { value }
+func twice(value: Int) -> Int { value * 2 }
+func map<T, U>(items: List[T], f: (T) -> U) -> List[U] {
+    match items {
+        Nil => std.empty<U>(),
+        Cons(head, tail) => std.prepend<U>(f(head), map<T, U>(tail, f))
+    }
+}
+routine Worker<T>(value: T) { std.log("worker", value) }
+routine main() {
+    std.log(identity(7), identity<String>("generic"))
+    std.log(map([1, 2, 3], twice))
+    let copied: (Bool) -> Bool = identity<Bool>
+    std.log(copied(True))
+    spawn Worker<Int>(42)
+}
