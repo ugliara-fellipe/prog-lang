@@ -2,11 +2,6 @@
 
 A numeração original foi mantida para preservar as referências entre documentos.
 
-## 11. Constantes de tempo de compilação
-
-**Explanation:** Valores avaliados em compile‑time para limites de loops ou tamanhos de arena.
-**Example:** `const MAX_ITER = 1000`
-
 ## 12. Anotações de recursos (budget)
 
 **Explanation:** Declara limites de memória ou passos para rotinas; o runtime valida antes de executar.
@@ -21,11 +16,6 @@ A numeração original foi mantida para preservar as referências entre document
 
 **Explanation:** `|>` é o padrão recomendado para a maioria das transformações lineares; `<|` pode ser usado como atalho sintático para leitura de trás‑para‑frente; `>>>` e `->>` são úteis para compor funções sem execução imediata, criando pipelines reutilizáveis.
 **Example:** `data |> transform |> serialize`
-
-## 15. Doc‑strings / comentários estruturados
-
-**Explanation:** Geração automática de documentação.
-**Example:** `/// Soma dois inteiros`
 
 ## 16. Interoperabilidade FFI
 

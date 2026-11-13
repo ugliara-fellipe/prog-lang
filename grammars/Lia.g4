@@ -17,11 +17,11 @@ importItemList
     ;
 
 topLevelDecl
-    : typeDecl
-    | enumDecl
-    | funcDecl
-    | routineDecl
-    | loopDecl
+    : DOC_COMMENT* (constDecl | typeDecl | enumDecl | funcDecl | routineDecl | loopDecl)
+    ;
+
+constDecl
+    : 'const' ID (':' typeSpec)? '=' expr
     ;
 
 typeDecl
@@ -34,11 +34,11 @@ enumDecl
     ;
 
 enumVariant
-    : ID ('(' (typeSpec (',' typeSpec)* ','?)? ')')?
+    : DOC_COMMENT* ID ('(' (typeSpec (',' typeSpec)* ','?)? ')')?
     ;
 
 structField
-    : ID ':' typeSpec
+    : DOC_COMMENT* ID ':' typeSpec
     ;
 
 funcDecl
@@ -109,7 +109,8 @@ block
     ;
 
 statement
-    : varDeclStmt
+    : DOC_COMMENT* constDecl
+    | varDeclStmt
     | memoryStmt
     | spawnStmt
     | signalStmt
@@ -220,6 +221,7 @@ ENUM_KW    : 'enum' ;
 FUNC_KW    : 'func' ;
 ROUTINE_KW : 'routine' ;
 LET_KW     : 'let' ;
+CONST_KW   : 'const' ;
 MUT_KW     : 'mut' ;
 IMPORT_KW  : 'import' ;
 SPAWN_KW   : 'spawn' ;
@@ -242,5 +244,6 @@ INT        : [0-9]+ ;
 STRING     : '"' ( '\\"' | ~['"\r\n'] )* '"' ;
 
 WS         : [ \t\r\n]+ -> skip ;
+DOC_COMMENT   : '///' (~[/\r\n] ~[\r\n]*)? ;
 LINE_COMMENT  : '//' ~[\r\n]* -> skip ;
 BLOCK_COMMENT : '/*' .*? '*/' -> skip ;

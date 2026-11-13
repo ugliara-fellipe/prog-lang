@@ -23,6 +23,9 @@ impl TypeSpec {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructField {
+    /// Markdown from the preceding `///` comment block.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub documentation: String,
     pub name: String,
     pub field_type: TypeSpec,
 }
@@ -42,6 +45,8 @@ pub enum Pattern {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expr {
+    /// Typed, already evaluated compile-time data.
+    ConstValue { value: Box<Expr>, value_type: TypeSpec },
     Closure { params: Vec<Param>, return_type: TypeSpec, body: Vec<Statement> },
     IntLiteral(i64),
     StringLiteral(String),
@@ -76,6 +81,7 @@ pub struct MatchCase {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Statement {
+    Const(ConstDecl),
     VarDecl {
         name: String,
         is_mutable: bool,
@@ -112,6 +118,9 @@ pub enum Statement {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FuncDecl {
+    /// Markdown from the preceding `///` comment block.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub documentation: String,
     pub name: String,
     #[serde(default)]
     pub type_params: Vec<String>,
@@ -122,6 +131,9 @@ pub struct FuncDecl {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutineDecl {
+    /// Markdown from the preceding `///` comment block.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub documentation: String,
     pub name: String,
     #[serde(default)]
     pub type_params: Vec<String>,
@@ -133,18 +145,27 @@ pub struct RoutineDecl {
 /// queue used by routines; it never owns a worker thread or CPU core.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoopDecl {
+    /// Markdown from the preceding `///` comment block.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub documentation: String,
     pub name: String,
     pub body: Vec<Statement>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnumVariant {
+    /// Markdown from the preceding `///` comment block.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub documentation: String,
     pub name: String,
     pub fields: Vec<TypeSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TypeDecl {
+    /// Markdown from the preceding `///` comment block.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub documentation: String,
     pub name: String,
     #[serde(default)]
     pub type_params: Vec<String>,
@@ -168,6 +189,7 @@ pub struct ImportDecl {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TopLevelDecl {
+    Const(ConstDecl),
     Import(ImportDecl),
     Type(TypeDecl),
     Func(FuncDecl),
@@ -179,4 +201,15 @@ pub enum TopLevelDecl {
 pub struct Program {
     pub imports: Vec<ImportDecl>,
     pub declarations: Vec<TopLevelDecl>,
+}
+
+/// A declaration whose initializer must be evaluated before execution.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstDecl {
+    /// Markdown from the preceding `///` comment block.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub documentation: String,
+    pub name: String,
+    pub type_annot: Option<TypeSpec>,
+    pub value: Expr,
 }

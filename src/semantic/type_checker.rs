@@ -62,6 +62,7 @@ impl TypeChecker {
 
     /// Entry point for the whole program.
     pub fn check_program(&mut self, program: &Program) -> Result<(), SemanticError> {
+        if crate::semantic::constants::needs_lowering(program){return self.check_program(&crate::semantic::constants::lower_program(program)?);}
         crate::semantic::tail_calls::validate_program(program)?;
         self.symbol_table.clear();
         self.functions.clear();
@@ -407,6 +408,7 @@ impl TypeChecker {
             }
         }
         match expr {
+            Expr::ConstValue{value,value_type}=>{crate::semantic::constants::validate_value(value,value_type)?;return Ok(value_type.clone());},
             Expr::Closure {params,return_type,body} => return self.check_closure(params,return_type,body),
             Expr::TailCall(call)=>return self.check_expr(call,expected),
             Expr::FunctionCall {name,args} => {
@@ -522,6 +524,7 @@ impl TypeChecker {
         for (position, statement) in body.iter().enumerate() {
             let tail_type = if position + 1 == body.len() { return_type } else { None };
             match statement {
+                Statement::Const(_)=>return Err(SemanticError::ConstantError("constant declaration must be lowered".into())),
                 Statement::VarDecl { name, type_annot, value, .. } => {
                     if let Some(ty)=type_annot { self.validate_type(ty)?; }
                     let actual = self.check_expr(value,type_annot.as_ref())?;
@@ -559,8 +562,12 @@ impl TypeChecker {
                     self.check_function_value_expr(collection)?;
                     let scope = self.symbol_table.clone();
                     let collection_type = self.infer_type(collection);
-                    let TypeSpec::Generic(name, args) = &collection_type else { return Err(SemanticError::InvalidExpression(format!("for requires a list, found {:?}", collection_type))); };
-                    if !matches!(name.as_str(),"List"|"Dict") || args.len() != 1 { return Err(SemanticError::InvalidExpression(format!("for requires a list, found {:?}", collection_type))); }
+                    if collection_type==TypeSpec::Primitive("Int".into()){
+                        self.symbol_table.insert(var_name.clone(),TypeSpec::Primitive("Int".into()));
+                        let result=self.check_function_value_body(body,None);self.symbol_table=scope;result?;continue;
+                    }
+                    let TypeSpec::Generic(name, args) = &collection_type else { return Err(SemanticError::InvalidExpression(format!("for requires Int, List[T] or Dict[T], found {:?}", collection_type))); };
+                    if !matches!(name.as_str(),"List"|"Dict") || args.len() != 1 { return Err(SemanticError::InvalidExpression(format!("for requires Int, List[T] or Dict[T], found {:?}", collection_type))); }
                     self.symbol_table.insert(var_name.clone(), if name=="Dict" {TypeSpec::Primitive("String".into())} else {args[0].clone()});
                     let result = self.check_function_value_body(body, None);
                     self.symbol_table = scope;
@@ -642,6 +649,7 @@ impl TypeChecker {
     fn validate_non_loop_body(statements: &[Statement]) -> Result<(), SemanticError> {
         for statement in statements {
             match statement {
+                Statement::Const(_)=>return Err(SemanticError::ConstantError("constant declaration must be lowered".into())),
                 Statement::MemorySet { .. } => return Err(SemanticError::MemoryOutsideLoop),
                 Statement::Terminate => return Err(SemanticError::TerminateOutsideLoop),
                 Statement::ExprStmt(expr) | Statement::Spawn(expr) => { Self::reject_receive(expr)?; Self::reject_memory(expr)?; },
@@ -720,6 +728,7 @@ impl TypeChecker {
     fn check_stmt(&mut self, stmt: &Statement, allows_throw: bool) -> Result<(), SemanticError> {
         Self::validate_standard_library_calls(stmt, &self.functions)?;
         match stmt {
+            Statement::Const(_)=>return Err(SemanticError::ConstantError("constant declaration must be lowered".into())),
             Statement::MemorySet { value, .. } => { Self::reject_receive(value)?; },
             Statement::Spawn(_) => {
                 if allows_throw { return Err(SemanticError::SpawnInsideFunction); }
@@ -802,6 +811,7 @@ impl TypeChecker {
             functions: &HashMap<String, FuncDecl>,
         ) -> Result<(), SemanticError> {
             match expression {
+                Expr::ConstValue{value,value_type}=>crate::semantic::constants::validate_value(value,value_type)?,
                 Expr::IndirectCall { target, args } => {
                     expression_is_imported(target, functions)?;
                     for arg in args { expression_is_imported(arg, functions)?; }
@@ -847,6 +857,7 @@ impl TypeChecker {
         }
 
         match statement {
+            Statement::Const(_)=>return Err(SemanticError::ConstantError("constant declaration must be lowered".into())),
             Statement::MemorySet { value, .. } => expression_is_imported(value, functions),
             Statement::ExprStmt(expression) | Statement::Spawn(expression) | Statement::Throw(expression) => {
                 expression_is_imported(expression, functions)
@@ -887,6 +898,7 @@ impl TypeChecker {
     }
     fn infer_type_inner(&self, expr: &Expr) -> TypeSpec {
         match expr {
+            Expr::ConstValue{value_type,..}=>value_type.clone(),
             Expr::DictLiteral(_) | Expr::Index{..} => self.check_expr(expr,None).unwrap_or(TypeSpec::Primitive("Unknown".into())),
             Expr::IntLiteral(_) => TypeSpec::Primitive("Int".to_string()),
             Expr::StringLiteral(_) => TypeSpec::Primitive("String".to_string()),

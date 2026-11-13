@@ -6,6 +6,7 @@ pub struct TerminationChecker;
 
 impl TerminationChecker {
     pub fn verify_program(program: &Program) -> Result<(), SemanticError> {
+        if crate::semantic::constants::needs_lowering(program){return Self::verify_program(&crate::semantic::constants::lower_program(program)?);}
         for decl in &program.declarations {
             match decl {
                 TopLevelDecl::Func(func) => {
@@ -29,7 +30,11 @@ impl TerminationChecker {
     fn verify_func_termination(func: &FuncDecl) -> Result<(), SemanticError> {
         let func_name = &func.name;
         let mut sub_components = HashSet::new();
-        if let Some(param) = func.params.first() { sub_components.insert(format!("\0{}",param.name)); }
+        if let Some(param) = func.params.first() {
+            // Integer ranges are bounded, but their indices are not inductive
+            // payloads. Keep scalar recursion outside the structural proof.
+            if !matches!(&param.param_type,TypeSpec::Primitive(n) if matches!(n.as_str(),"Int"|"Bool"|"String"|"Json")) {sub_components.insert(format!("\0{}",param.name));}
+        }
         Self::check_body_termination(&func.body,func_name,&sub_components)
     }
 
@@ -98,6 +103,7 @@ impl TerminationChecker {
         sub_components: &HashSet<String>,
     ) -> Result<(), SemanticError> {
         match stmt {
+            Statement::Const(_)=>return Err(SemanticError::ConstantError("constant declaration must be lowered".into())),
             Statement::MemorySet { value, .. } => Self::check_expr_termination(value, func_name, sub_components)?,
             Statement::Match { target, cases } => {
                 Self::check_expr_termination(target, func_name, sub_components)?;
@@ -162,6 +168,7 @@ impl TerminationChecker {
         sub_components: &HashSet<String>,
     ) -> Result<(), SemanticError> {
         match stmt {
+            Statement::Const(_)=>return Err(SemanticError::ConstantError("constant declaration must be lowered".into())),
             Statement::MemorySet { value, .. } => Self::check_expr_termination(value, routine_name, sub_components)?,
             Statement::Match { target, cases } => {
                 Self::check_routine_expr_termination(target, routine_name, sub_components)?;

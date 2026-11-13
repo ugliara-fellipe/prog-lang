@@ -32,6 +32,8 @@ This directory contains a suite of programs written in **Lia** (`.lia`), designe
 | [`19_option_result.lia`](19_option_result.lia) | Optional and error values, generic sum definitions, mapping, lazy fallback, and copied actor arguments. |
 | [`20_tailcalls.lia`](20_tailcalls.lia) | Tail-recursive accumulators, implicit generic TCO, closure callbacks, and preserved exception handlers. |
 | [`21_dictionary_json.lia`](21_dictionary_json.lia) | Typed dictionaries, safe lookup, value copies, callback payloads, and JSON round trips. |
+| [`22_constants.lia`](22_constants.lia) | Compile-time constants, checked arithmetic, typed collections, lexical scope, closures, and bounded integer iteration. |
+| [`23_docstrings.lia`](23_docstrings.lia) | Structured documentation comments, documented types and variants, and Markdown API generation with the doc command. |
 | [`math.lia`](math.lia) and [`std.lia`](std.lia) | Libraries: they have no `main` and become available only through explicit imports. |
 
 ---

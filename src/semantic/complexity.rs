@@ -94,6 +94,7 @@ impl ComplexityAnalyzer {
     }
 
     pub fn try_analyze(&mut self, program: &Program) -> Result<Vec<ComplexityEntry>, SemanticError> {
+        if crate::semantic::constants::needs_lowering(program){return self.try_analyze(&crate::semantic::constants::lower_program(program)?);}
         crate::semantic::dag::CallGraphValidator::new().build_and_validate(program)?;
         self.flow = Some(FunctionFlow::analyze(program)?);
         let mut results = Vec::new();
@@ -177,7 +178,7 @@ impl ComplexityAnalyzer {
                         complexity,
                     });
                 }
-                TopLevelDecl::Type(_) | TopLevelDecl::Import(_) => {}
+                TopLevelDecl::Const(_) | TopLevelDecl::Type(_) | TopLevelDecl::Import(_) => {}
             }
         }
 
@@ -213,6 +214,7 @@ impl ComplexityAnalyzer {
         recursive: &std::collections::HashSet<String>,
     ) -> Complexity {
         match stmt {
+            Statement::Const(_)=>Complexity::Constant,
             // Simple statements without sub-structure.
             Statement::Spawn(Expr::FunctionCall { args, .. } | Expr::IndirectCall { args, .. }) => args.iter()
                 .map(|arg| self.complexity_of_expr(arg, recursive))
@@ -232,7 +234,9 @@ impl ComplexityAnalyzer {
             Statement::ForLoop { collection, body, .. } => {
                 let body_cost = self.complexity_of_body(body, recursive);
                 // Each iteration of a `for` multiplies by N.
-                Complexity::Polynomial(1).multiply(&body_cost).max(&self.complexity_of_expr(collection, recursive))
+                let fixed=matches!(collection,Expr::IntLiteral(_)) || matches!(collection,Expr::ConstValue{value,value_type} if matches!(value.as_ref(),Expr::IntLiteral(_)) && *value_type==TypeSpec::Primitive("Int".into()));
+                let factor=if fixed{Complexity::Constant}else{Complexity::Polynomial(1)};
+                factor.multiply(&body_cost).max(&self.complexity_of_expr(collection, recursive))
             }
 
             // `match` → max over all branches.

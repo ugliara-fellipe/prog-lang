@@ -15,6 +15,7 @@ pub enum ParseError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
+    DocComment(String),
     Type,
     Enum,
     Func,
@@ -22,6 +23,7 @@ pub enum TokenKind {
     Loop,
     Import,
     Let,
+    Const,
     Mut,
     Spawn,
     Signal,
@@ -146,6 +148,14 @@ impl<'a> Lexer<'a> {
             }
         };
 
+        if self.is_doc_comment() {
+            self.advance();self.advance();self.advance();
+            if self.peek()==Some(' ') {self.advance();}
+            let mut content=String::new();
+            while let Some(c)=self.peek(){if c=='\n' || c=='\r'{break;}content.push(c);self.advance();}
+            return Ok(Token{kind:TokenKind::DocComment(content),line,col});
+        }
+
         if ch.is_alphabetic() || ch == '_' {
             let mut ident = String::new();
             while let Some(c) = self.peek() {
@@ -165,6 +175,7 @@ impl<'a> Lexer<'a> {
                 "loop" => TokenKind::Loop,
                 "import" => TokenKind::Import,
                 "let" => TokenKind::Let,
+                "const" => TokenKind::Const,
                 "mut" => TokenKind::Mut,
                 "spawn" => TokenKind::Spawn,
                 "signal" => TokenKind::Signal,
@@ -332,6 +343,11 @@ impl<'a> Lexer<'a> {
         Ok(Token { kind, line, col })
     }
 
+    fn is_doc_comment(&self)->bool {
+        self.peek()==Some('/') && self.peek_next()==Some('/')
+            && self.chars.get(self.pos+2)==Some(&'/') && self.chars.get(self.pos+3)!=Some(&'/')
+    }
+
     fn skip_whitespace_and_comments(&mut self) -> Result<(), ParseError> {
         loop {
             while let Some(c) = self.peek() {
@@ -342,6 +358,7 @@ impl<'a> Lexer<'a> {
                 }
             }
 
+            if self.is_doc_comment(){break;}
             if self.peek() == Some('/') && self.peek_next() == Some('/') {
                 // Line comment
                 while let Some(c) = self.peek() {
@@ -499,8 +516,33 @@ impl<'a> Parser<'a> {
         Ok(ImportDecl { package, kind })
     }
 
+    fn parse_documentation(&mut self)->Result<String,ParseError>{
+        let mut lines=Vec::new();
+        while let TokenKind::DocComment(text)=&self.current.kind{lines.push(text.clone());self.advance()?;}
+        Ok(lines.join("\n"))
+    }
+
+    fn documentation_error(&self)->ParseError{
+        ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:"documentation must precede a declaration, field or enum variant".into()}
+    }
+
     fn parse_top_level_decl(&mut self) -> Result<TopLevelDecl, ParseError> {
+        if matches!(&self.current.kind,TokenKind::DocComment(_)){
+            let documentation=self.parse_documentation()?;
+            if !matches!(self.current.kind,TokenKind::Const|TokenKind::Type|TokenKind::Enum|TokenKind::Func|TokenKind::Routine|TokenKind::Loop){return Err(self.documentation_error());}
+            let mut decl=self.parse_top_level_decl()?;
+            match &mut decl{
+                TopLevelDecl::Const(c)=>c.documentation=documentation,
+                TopLevelDecl::Type(t)=>t.documentation=documentation,
+                TopLevelDecl::Func(f)=>f.documentation=documentation,
+                TopLevelDecl::Routine(r)=>r.documentation=documentation,
+                TopLevelDecl::Loop(l)=>l.documentation=documentation,
+                _=>unreachable!()
+            }
+            return Ok(decl);
+        }
         match self.current.kind {
+            TokenKind::Const => self.parse_const_decl().map(TopLevelDecl::Const),
             TokenKind::Import => self.parse_import_decl().map(TopLevelDecl::Import),
             TokenKind::Type => self.parse_type_decl().map(TopLevelDecl::Type),
             TokenKind::Enum => self.parse_enum_decl().map(TopLevelDecl::Type),
@@ -511,7 +553,7 @@ impl<'a> Parser<'a> {
                 line: self.current.line,
                 col: self.current.col,
                 message: format!(
-                    "Unexpected top-level declaration: expected 'import', 'type', 'func', 'routine', or 'loop', found {:?}",
+                    "Unexpected top-level declaration: expected 'import', 'const', 'type', 'enum', 'func', 'routine', or 'loop', found {:?}",
                     other
                 ),
             }),
@@ -531,16 +573,18 @@ impl<'a> Parser<'a> {
                 if variants.iter().any(|v|v.name==variant.name){return Err(ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:format!("duplicate variant {}",variant.name)});}
                 variants.push(variant);
             }
-            return Ok(TypeDecl{name,type_params,fields:vec![],variants});
+            return Ok(TypeDecl{documentation:String::new(),name,type_params,fields:vec![],variants});
         }
         self.expect(TokenKind::LBrace)?;
 
         let mut fields = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+            let documentation=self.parse_documentation()?;
             let field_name = self.expect_id()?;
             self.expect(TokenKind::Colon)?;
             let field_type = self.parse_type_spec()?;
             fields.push(StructField {
+                documentation,
                 name: field_name,
                 field_type,
             });
@@ -552,7 +596,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(TokenKind::RBrace)?;
-        Ok(TypeDecl { name, type_params, fields, variants: vec![] })
+        Ok(TypeDecl {documentation:String::new(), name, type_params, fields, variants: vec![] })
     }
 
     fn parse_enum_decl(&mut self) -> Result<TypeDecl, ParseError> {
@@ -569,10 +613,11 @@ impl<'a> Parser<'a> {
         }
         self.expect(TokenKind::RBrace)?;
         if variants.is_empty() {return Err(ParseError::SyntaxError {line:self.current.line,col:self.current.col,message:"enum must declare at least one variant".into()});}
-        Ok(TypeDecl {name,type_params,fields:vec![],variants})
+        Ok(TypeDecl {documentation:String::new(),name,type_params,fields:vec![],variants})
     }
 
     fn parse_enum_variant(&mut self)->Result<EnumVariant,ParseError>{
+        let documentation=self.parse_documentation()?;
         let name=self.expect_id()?;
         if matches!(name.as_str(),"True"|"False"|"Nil"|"Cons") || !name.chars().next().is_some_and(char::is_uppercase){return Err(ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:"variant names must be capitalized and must not replace builtin constructors".into()});}
         let mut fields=Vec::new();
@@ -581,7 +626,7 @@ impl<'a> Parser<'a> {
             while !self.check(&TokenKind::RParen){fields.push(self.parse_type_spec()?);if !self.check(&TokenKind::Comma){break;}self.advance()?;}
             self.expect(TokenKind::RParen)?;
         }
-        Ok(EnumVariant{name,fields})
+        Ok(EnumVariant{documentation,name,fields})
     }
 
     fn parse_func_decl(&mut self) -> Result<FuncDecl, ParseError> {
@@ -617,6 +662,7 @@ impl<'a> Parser<'a> {
 
         let body = self.parse_block()?;
         Ok(FuncDecl {
+            documentation:String::new(),
             name,
             type_params,
             params,
@@ -658,7 +704,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::RParen)?;
 
         let body = self.parse_block()?;
-        Ok(RoutineDecl { name, type_params, params, body })
+        Ok(RoutineDecl {documentation:String::new(), name, type_params, params, body })
     }
 
     fn parse_type_params(&mut self) -> Result<Vec<String>, ParseError> {
@@ -695,7 +741,7 @@ impl<'a> Parser<'a> {
         }
         self.expect(TokenKind::RParen)?;
         let body = self.parse_block()?;
-        Ok(LoopDecl { name, body })
+        Ok(LoopDecl {documentation:String::new(), name, body })
     }
 
     fn parse_type_spec(&mut self) -> Result<TypeSpec, ParseError> {
@@ -750,7 +796,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
+        if matches!(&self.current.kind,TokenKind::DocComment(_)){
+            let documentation=self.parse_documentation()?;
+            if !self.check(&TokenKind::Const){return Err(self.documentation_error());}
+            let mut decl=self.parse_const_decl()?;decl.documentation=documentation;
+            return Ok(Statement::Const(decl));
+        }
         match self.current.kind {
+            TokenKind::Const => self.parse_const_decl().map(Statement::Const),
             TokenKind::Let => self.parse_var_decl(),
             TokenKind::Memory => self.parse_memory(),
             TokenKind::Spawn => self.parse_spawn(),
@@ -768,6 +821,14 @@ impl<'a> Parser<'a> {
                 Ok(Statement::ExprStmt(expr))
             }
         }
+    }
+
+    fn parse_const_decl(&mut self) -> Result<ConstDecl,ParseError> {
+        self.expect(TokenKind::Const)?;
+        let name=self.expect_id()?;
+        let type_annot=if self.check(&TokenKind::Colon){self.advance()?;Some(self.parse_type_spec()?)}else{None};
+        self.expect(TokenKind::Assign)?;
+        Ok(ConstDecl{documentation:String::new(),name,type_annot,value:self.parse_expr()?})
     }
 
     fn parse_var_decl(&mut self) -> Result<Statement, ParseError> {

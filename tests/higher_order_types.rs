@@ -101,10 +101,11 @@ fn invalid_pattern_arity_and_function_assignment_are_rejected() {
 
 #[test]
 fn scalar_annotations_operations_and_fake_intrinsics_are_checked() {
+    check("routine main() { for i in 1 { let n: Int = i } }").unwrap();
     assert!(matches!(check("routine main() { let value: Int = \"bad\" }"), Err(SemanticError::FunctionReturnTypeMismatch { .. })));
     assert!(matches!(check("func id(x: Int) -> Int { x } func choose() -> (Int) -> Int { id + id }"), Err(SemanticError::InvalidExpression(_))));
     assert!(matches!(check("func max(x: Int, y: Int) -> Int {}"), Err(SemanticError::MissingFunctionReturn)));
-    assert!(matches!(check("routine main() { for f in 1 {} }"), Err(SemanticError::InvalidExpression(_))));
+    assert!(matches!(check("routine main() { for f in True {} }"), Err(SemanticError::InvalidExpression(_))));
 }
 
 #[test]

@@ -11,6 +11,7 @@ pub struct CallGraphValidator {
 impl CallGraphValidator {
     pub fn new() -> Self { Self { adjacency_list: HashMap::new() } }
     pub fn build_and_validate(&mut self, program: &Program) -> Result<(), SemanticError> {
+        if crate::semantic::constants::needs_lowering(program){return self.build_and_validate(&crate::semantic::constants::lower_program(program)?);}
         let flow = FunctionFlow::analyze(program)?;
         self.adjacency_list = flow.calls_by_owner().clone();
         for decl in &program.declarations {

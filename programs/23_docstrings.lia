@@ -1,0 +1,53 @@
+import std
+
+/// Quantidade de execuções deste exemplo.
+const REPEATS: Int = 2
+
+/// Coordenadas de um ponto no plano.
+type Point {
+    /// Posição horizontal.
+    x: Int,
+    /// Posição vertical.
+    y: Int
+}
+
+/// Resultado de uma consulta opcional.
+enum Lookup<T> {
+    /// Valor encontrado.
+    Found(T),
+    /// Nenhum valor disponível.
+    Missing
+}
+
+/// Identidade com parâmetro de tipo.
+///
+/// Retorna uma cópia do argumento.
+///
+/// Exemplo:
+/// ~~~lia
+/// identity<Int>(3)
+/// ~~~
+func identity<T>(value: T) -> T { value }
+
+/// Soma dois inteiros.
+///
+/// - a: primeira parcela.
+/// - b: segunda parcela.
+///
+/// O resultado tem tipo Int.
+func add(a: Int, b: Int) -> Int { a + b }
+
+/// Recebe uma mensagem e encerra o ator.
+loop Listener() { terminate }
+
+/// Imprime o valor recebido.
+routine Worker(value: Int) { std.log("worker", value) }
+
+/// Executa os exemplos documentados.
+routine main() {
+    /// Repetições locais, avaliadas antes da execução.
+    const LOCAL = REPEATS
+    std.log("sum", add(2, 3), identity(7))
+    for i in LOCAL { std.log("index", i) }
+    spawn Worker(REPEATS)
+}

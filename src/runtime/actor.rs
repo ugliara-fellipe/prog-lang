@@ -127,7 +127,7 @@ impl std::fmt::Display for RuntimeValue {
 }
 
 impl RuntimeValue {
-    pub(crate) fn iteration_items(self)->Option<Vec<Self>>{match self{Self::List(v)=>Some(v),Self::Dict(d)=>Some(d.into_keys().map(Self::String).collect()),_=>None}}
+    pub(crate) fn iteration_items(self)->Option<Box<dyn Iterator<Item=Self>>>{match self{Self::List(v)=>Some(Box::new(v.into_iter())),Self::Dict(d)=>Some(Box::new(d.into_keys().map(Self::String))),Self::Int(n) if n>=0=>Some(Box::new((0..n).map(Self::Int))),_=>None}}
     pub(crate) fn type_name(&self) -> String {
         match self {
             Self::Int(_) => "Int".into(), Self::String(_) => "String".into(),
@@ -310,7 +310,7 @@ impl SignalRouter {
             },
             Statement::Throw(expr)=>return Err(EvaluationFailure::Thrown(Self::evaluate_expr(expr,scope,router)?)),
             Statement::Signal{loop_name,payload}=>{let value=Self::evaluate_expr(payload,scope,router)?;router.emit(loop_name,value.to_string());},
-            Statement::Spawn(_)|Statement::Terminate|Statement::MemorySet{..}=>return Err(EvaluationFailure::Invalid),
+            Statement::Const(_)|Statement::Spawn(_)|Statement::Terminate|Statement::MemorySet{..}=>return Err(EvaluationFailure::Invalid),
         }}
         Ok(EvaluationStep::Value(result))
     }
@@ -347,6 +347,7 @@ impl SignalRouter {
 
     fn evaluate_expr_context(expr: &Expr, scope: &HashMap<String, RuntimeValue>, router: &SignalRouter, context: EvaluationContext<'_>) -> Result<RuntimeValue, EvaluationFailure> {
         match expr {
+            Expr::ConstValue{value,..}=>RuntimeValue::constant_value(value),
             Expr::Closure{params,body,..}=>{
                 let captures=crate::semantic::closures::free_variables(params,body).into_iter().filter_map(|n|scope.get(&n).cloned().map(|v|(n,v))).collect();
                 Ok(RuntimeValue::Closure{params:params.clone(),body:body.clone(),captures})
@@ -685,5 +686,19 @@ impl SignalRouter {
             ("json.null",[])=>V::Null,
             _=>return Err(EvaluationFailure::Invalid)
         };Ok(value)
+    }
+}
+
+impl RuntimeValue {
+    // Materialize immutable precomputed data; never dispatch runtime calls.
+    fn constant_value(expr:&Expr)->Result<Self,EvaluationFailure>{
+        match expr {
+            Expr::IntLiteral(n)=>Ok(Self::Int(*n)),
+            Expr::StringLiteral(s)=>Ok(Self::String(s.clone())),
+            Expr::Variable(n) if n=="True" || n=="False"=>Ok(Self::Bool(n=="True")),
+            Expr::ListLiteral(items)=>items.iter().map(Self::constant_value).collect::<Result<Vec<_>,_>>().map(Self::List),
+            Expr::DictLiteral(items)=>items.iter().map(|(k,e)|Ok((k.clone(),Self::constant_value(e)?))).collect::<Result<BTreeMap<_,_>,_>>().map(Self::Dict),
+            _=>Err(EvaluationFailure::Invalid)
+        }
     }
 }

@@ -30,7 +30,7 @@ fn deep_acyclic_tail_chain_between_different_functions_is_iterative(){
             let value=if i==2999{Expr::IntLiteral(7)}else if i%2==0{
                 Expr::IndirectCall{target:Box::new(Expr::Closure{params:vec![],return_type:TypeSpec::Primitive("Int".into()),body:vec![Statement::ExprStmt(next)]}),args:vec![]}
             }else{next};
-            router.register_function(FuncDecl{name:format!("step{}",i),type_params:vec![],params:vec![],return_type:Some(TypeSpec::Primitive("Int".into())),body:vec![Statement::ExprStmt(value)]});
+            router.register_function(FuncDecl{documentation:String::new(),name:format!("step{}",i),type_params:vec![],params:vec![],return_type:Some(TypeSpec::Primitive("Int".into())),body:vec![Statement::ExprStmt(value)]});
         }
         assert_eq!(router.evaluate_function_result("step0",vec![]),Ok(RuntimeValue::Int(7)));
     }).unwrap().join().unwrap();

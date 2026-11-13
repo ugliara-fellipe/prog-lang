@@ -217,6 +217,7 @@ impl WorkStealingPool {
             ($expr:expr) => { match evaluate($expr) { Ok(value) => value, Err(error) => return ExecutionControl::Failure(error) } };
         }
         match stmt {
+            Statement::Const(_)=>ExecutionControl::Failure(EvaluationFailure::Invalid),
             Statement::ExprStmt(expr) => { value!(expr); ExecutionControl::Continue }
             Statement::VarDecl { name, value, is_mutable, type_annot } => {
                 let result = value!(value);

@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|a| a != "--verbose" && a != "-v")
         .collect();
 
-    if verbose {
+    if verbose && !matches!(args.get(1).map(String::as_str),Some("doc"|"docs")) {
         println!("============================================================");
         println!(" Lia - Compiler and Runtime for Finite Routines ");
         println!("============================================================\n");
@@ -49,6 +49,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format!("{}.liac", input_path.trim_end_matches(".lia"))
             };
             compile_to_artifact(input_path, &output_path)?;
+            return Ok(());
+        }
+
+        // Documentation is generated from source, preserving constant declarations.
+        if cmd=="doc" || cmd=="docs" {
+            if !(args.len()==3 || args.len()==5 && args[3]=="-o"){
+                return Err("Usage: lia doc <file.lia> [-o <output.md>]".into());
+            }
+            generate_documentation(&args[2],if args.len()==5{Some(&args[4])}else{None})?;
             return Ok(());
         }
 
@@ -208,6 +217,7 @@ async fn run_compiled_artifact(artifact_path: &str, verbose: bool) -> Result<(),
     }
     let bytes = fs::read(artifact_path)?;
     let program: Program = serde_json::from_slice(&bytes)?;
+    let program = lia::semantic::constants::lower_program(&program)?;
     // Serialized AST is an input format, not a proof of validation. Rebuild
     // flow information and recheck it before executing any artifact.
     CallGraphValidator::new().build_and_validate(&program)?;
@@ -254,7 +264,9 @@ async fn compile_and_run_file(file_path: &str, verbose: bool) -> Result<(), Box<
             prog
         }
         Err(e) => {
-            eprintln!("❌ Package / Import Error: {}", e);
+            if matches!(&e,lia::semantic::SemanticError::ConstantError(_)){
+                eprintln!("❌ Compile-time Constant Error: {}",e);
+            }else{eprintln!("❌ Package / Import Error: {}", e);}
             return Err(Box::new(e));
         }
     };
@@ -424,6 +436,8 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
         "programs/19_option_result.lia",
         "programs/20_tailcalls.lia",
         "programs/21_dictionary_json.lia",
+        "programs/22_constants.lia",
+        "programs/23_docstrings.lia",
         "programs/math.lia",
         "programs/std.lia",
     ];
@@ -572,4 +586,24 @@ fn inject_complexity_comments(source: &str, entries: &[lia::semantic::complexity
     }
 
     out
+}
+
+/// Validate the full program, then render this file's public source declarations.
+fn generate_documentation(input_path:&str,output_path:Option<&str>)->Result<(),Box<dyn std::error::Error>>{
+    let source=fs::read_to_string(input_path)?;
+    let raw=Parser::new(&source)?.parse_program()?;
+    let base=Path::new(input_path).parent().unwrap_or_else(||Path::new("."));
+    let resolved=PackageManager::new(base).resolve_program(raw.clone())?;
+    CallGraphValidator::new().build_and_validate(&resolved)?;
+    TypeChecker::new().check_program(&resolved)?;
+    TerminationChecker::verify_program(&resolved)?;
+    let title=Path::new(input_path).file_name().and_then(|n|n.to_str()).unwrap_or("Lia");
+    let markdown=lia::documentation::render_markdown(&raw,title);
+    if let Some(output)=output_path{
+        if fs::canonicalize(output).ok().as_ref()==Some(&fs::canonicalize(input_path)?){
+            return Err("documentation output must differ from the source file".into());
+        }
+        fs::write(output,markdown)?;
+    }else{print!("{}",markdown);}
+    Ok(())
 }

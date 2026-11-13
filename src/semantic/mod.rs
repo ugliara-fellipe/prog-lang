@@ -1,3 +1,4 @@
+pub mod constants;
 pub mod json_types;
 pub mod tail_calls;
 pub mod closures;
@@ -14,6 +15,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum SemanticError {
+    #[error("Compile-time constant error: {0}")]
+    ConstantError(String),
     #[error("Invalid tailcall: {0}")]
     InvalidTailCall(String),
     #[error("Closure capture cannot be copied by value: {0}")]

@@ -1,0 +1,26 @@
+import std
+import dict
+
+const MAX_ITER: Int = BASE * 2
+const BASE = 2
+const READY: Bool = MAX_ITER == 4
+const LABEL = "constants"
+const LIMITS: Dict[Int] = {iterations: MAX_ITER}
+const ITEMS: List[Int] = [BASE, MAX_ITER]
+func configured() -> Int {
+    const EXTRA = MAX_ITER + 1
+    let value = || -> Int { EXTRA }
+    value()
+}
+routine Worker(count: Int) {
+    for i in count { std.log("worker", i) }
+}
+routine main() {
+    const LOCAL = MAX_ITER / BASE
+    std.log(LABEL, MAX_ITER, READY, configured())
+    std.log("types", type MAX_ITER, type LIMITS)
+    std.log("dict", LIMITS["iterations"])
+    for i in LOCAL { std.log("index", i) }
+    for item in ITEMS { std.log("item", item) }
+    spawn Worker(LOCAL)
+}

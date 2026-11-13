@@ -31,6 +31,7 @@ fn free_expr(expr:&Expr,bound:&HashSet<String>,free:&mut HashSet<String>){
 fn free_body(body:&[Statement],outer:&HashSet<String>,free:&mut HashSet<String>){
     let mut bound=outer.clone();
     for stmt in body{match stmt{
+        Statement::Const(c)=>{free_expr(&c.value,&bound,free);bound.insert(c.name.clone());},
         Statement::VarDecl{name,value,..}=>{free_expr(value,&bound,free);bound.insert(name.clone());},
         Statement::ExprStmt(e)|Statement::Spawn(e)|Statement::Throw(e)|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>free_expr(e,&bound,free),
         Statement::ForLoop{var_name,collection,body}=>{free_expr(collection,&bound,free);let mut local=bound.clone();local.insert(var_name.clone());free_body(body,&local,free);},
@@ -57,6 +58,7 @@ pub fn collect_expr<'a>(expr:&'a Expr,found:&mut Vec<&'a Expr>){
 }
 fn collect_body<'a>(body:&'a [Statement],found:&mut Vec<&'a Expr>){
     for stmt in body{match stmt{
+        Statement::Const(c)=>collect_expr(&c.value,found),
         Statement::ExprStmt(e)|Statement::Spawn(e)|Statement::Throw(e)|Statement::VarDecl{value:e,..}|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>collect_expr(e,found),
         Statement::ForLoop{collection,body,..}=>{collect_expr(collection,found);collect_body(body,found);},
         Statement::Match{target,cases}=>{collect_expr(target,found);for case in cases{collect_body(&case.body,found);}},

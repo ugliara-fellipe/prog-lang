@@ -383,3 +383,21 @@ With `import dict`, `d["count"]` returns `Option[Int]`, and
 Use `Dict[Json]` for heterogeneous JSON data and `import json` for
 `json.parse_dict(text)` / `json.stringify(data)`, returning `Result`.
 See [DICIONARIOS.md](DICIONARIOS.md) and [21_dictionary_json.lia](programs/21_dictionary_json.lia).
+
+### Compile-time constants
+
+Declare `const MAX_ITER: Int = 250 * 4` globally or inside a block.
+Initializers use constant data, names and checked arithmetic; cycles,
+overflow and division by zero are compilation errors.
+`for i in MAX_ITER { ... }` iterates from zero to the exclusive bound
+without allocating a list. Constants support imports and are stored
+as precomputed typed data in compiled artifacts.
+See [CONSTANTES.md](CONSTANTES.md) and [22_constants.lia](programs/22_constants.lia).
+
+### Doc-strings and API documentation
+
+Use `///` before functions, routines, loops, constants, types, record fields
+and enum variants. Comment blocks preserve Markdown paragraphs and code examples.
+`lia doc file.lia` prints the API as Markdown; `lia doc file.lia -o api.md`
+writes a file after semantic validation, without running the program.
+See [DOCSTRINGS.md](DOCSTRINGS.md) and the [generated example](docs/docstrings-api.md).

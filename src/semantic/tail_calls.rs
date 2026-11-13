@@ -12,6 +12,7 @@ pub fn validate_program(program:&Program)->Result<(),SemanticError>{
 }
 fn body(statements:&[Statement],tail:bool)->Result<(),SemanticError>{
     for (i,stmt) in statements.iter().enumerate(){let last=tail && i+1==statements.len();match stmt{
+        Statement::Const(c)=>expr(&c.value,false)?,
         Statement::ExprStmt(e)=>expr(e,last)?,
         Statement::VarDecl{value:e,..}|Statement::Spawn(e)|Statement::Throw(e)|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>expr(e,false)?,
         Statement::Match{target,cases}=>{expr(target,false)?;for case in cases{body(&case.body,last)?;}},
@@ -22,6 +23,7 @@ fn body(statements:&[Statement],tail:bool)->Result<(),SemanticError>{
 }
 fn expr(e:&Expr,tail:bool)->Result<(),SemanticError>{
     match e{
+        Expr::ConstValue{value,value_type}=>crate::semantic::constants::validate_value(value,value_type)?,
         Expr::TailCall(call)=>{
             if !tail || !matches!(call.as_ref(),Expr::FunctionCall{..}|Expr::IndirectCall{..}) {return Err(SemanticError::InvalidTailCall("a function call must be the final result of a function or closure".into()));}
             expr(call,false)?;

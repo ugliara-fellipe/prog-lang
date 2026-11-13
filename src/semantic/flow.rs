@@ -38,6 +38,7 @@ pub struct FunctionFlow {
 }
 impl FunctionFlow {
     pub fn analyze(program: &Program) -> Result<Self, SemanticError> {
+        if crate::semantic::constants::needs_lowering(program){return Err(SemanticError::ConstantError("lower constants before function flow analysis".into()));}
         crate::semantic::tail_calls::validate_program(program)?;
         let mut solver = Solver::new(program);
         solver.solve();
@@ -293,6 +294,7 @@ impl<'a> Solver<'a> {
         let mut result = Value::default();
         for stmt in body {
             result = match stmt {
+                Statement::Const(_)=>Value::default(),
                 Statement::VarDecl { name,value,.. } => { let value = self.expr(owner,value,scope,false); scope.insert(name.clone(),value); Value::default() }
                 Statement::ExprStmt(expr) => self.expr(owner,expr,scope,false),
                 Statement::Spawn(expr) => { self.expr(owner,expr,scope,true); Value::default() }

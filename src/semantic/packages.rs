@@ -24,6 +24,11 @@ impl PackageManager {
 
     /// Load and resolve all imports recursively for a main program, returning a consolidated Program
     pub fn resolve_program(&mut self, main_prog: Program) -> Result<Program, SemanticError> {
+        let resolved=self.resolve_imports(main_prog)?;
+        crate::semantic::constants::lower_program(&resolved)
+    }
+
+    fn resolve_imports(&mut self, main_prog: Program) -> Result<Program, SemanticError> {
         let mut final_declarations = Vec::new();
         let mut imported_decls = Vec::new();
 
@@ -91,6 +96,7 @@ impl PackageManager {
                 TopLevelDecl::Routine(r) => { Self::qualify_body(&mut r.body, &names, &r.params.iter().map(|p| p.name.clone()).collect()); r.name = names[name].clone(); }
                 TopLevelDecl::Loop(l) => { Self::qualify_body(&mut l.body, &names, &HashSet::new()); l.name = names[name].clone(); }
                 TopLevelDecl::Type(t) => t.name = names[name].clone(),
+                TopLevelDecl::Const(c)=>{Self::qualify_expr(&mut c.value,&names,&HashSet::new());c.name=names[name].clone();},
                 _ => {}
             }
             if selected.contains(name) {
@@ -108,6 +114,7 @@ impl PackageManager {
                     TopLevelDecl::Routine(r) => r.name = name.into(),
                     TopLevelDecl::Loop(l) => l.name = name.into(),
                     TopLevelDecl::Type(t) => t.name = name.into(),
+                    TopLevelDecl::Const(c)=>c.name=name.into(),
                     _ => {}
                 }
                 result.push(alias);
@@ -118,7 +125,7 @@ impl PackageManager {
     }
 
     fn decl_name(decl: &TopLevelDecl) -> Option<&str> {
-        match decl { TopLevelDecl::Func(f) => Some(&f.name), TopLevelDecl::Routine(r) => Some(&r.name), TopLevelDecl::Loop(l) => Some(&l.name), TopLevelDecl::Type(t) => Some(&t.name), _ => None }
+        match decl { TopLevelDecl::Const(c)=>Some(&c.name), TopLevelDecl::Func(f) => Some(&f.name), TopLevelDecl::Routine(r) => Some(&r.name), TopLevelDecl::Loop(l) => Some(&l.name), TopLevelDecl::Type(t) => Some(&t.name), _ => None }
     }
 
     fn qualify_expr(expr: &mut Expr, names: &HashMap<String, String>, bound: &HashSet<String>) {
@@ -127,7 +134,7 @@ impl PackageManager {
                 let mut local=bound.clone();local.extend(params.iter().map(|p|p.name.clone()));
                 Self::qualify_body(body,names,&local);
             },
-            Expr::Variable(name) => if !bound.contains(name) { if let Some(full) = names.get(name) { *name = full.clone(); } },
+            Expr::TypeOf(name) | Expr::Variable(name) => if !bound.contains(name) { if let Some(full) = names.get(name) { *name = full.clone(); } },
             Expr::FunctionCall { name, args } => { if !bound.contains(name) { if let Some(full) = names.get(name) { *name = full.clone(); } } for arg in args { Self::qualify_expr(arg, names, bound); } }
             Expr::IndirectCall { target, args } => { Self::qualify_expr(target, names, bound); for arg in args { Self::qualify_expr(arg, names, bound); } }
             Expr::BinaryOp { left, right, .. } => { Self::qualify_expr(left, names, bound); Self::qualify_expr(right, names, bound); }
@@ -165,6 +172,7 @@ impl PackageManager {
 
     fn qualify_body_types(body:&mut [Statement],names:&HashMap<String,String>) {
         for stmt in body {match stmt {
+            Statement::Const(c)=>{if let Some(t)=&mut c.type_annot{Self::qualify_type(t,names);}Self::qualify_expr_types(&mut c.value,names);},
             Statement::VarDecl{type_annot,value,..}=>{if let Some(ty)=type_annot{Self::qualify_type(ty,names);}Self::qualify_expr_types(value,names);},
             Statement::ExprStmt(e)|Statement::Spawn(e)|Statement::Throw(e)|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>Self::qualify_expr_types(e,names),
             Statement::ForLoop{collection,body,..}=>{Self::qualify_expr_types(collection,names);Self::qualify_body_types(body,names);},
@@ -175,6 +183,7 @@ impl PackageManager {
     }
     fn qualify_decl_types(decl:&mut TopLevelDecl,names:&HashMap<String,String>) {
         match decl {
+            TopLevelDecl::Const(c)=>{if let Some(t)=&mut c.type_annot{Self::qualify_type(t,names);}Self::qualify_expr_types(&mut c.value,names);},
             TopLevelDecl::Func(f)=>{for p in &mut f.params {Self::qualify_type(&mut p.param_type,names);}if let Some(r)=&mut f.return_type{Self::qualify_type(r,names);}Self::qualify_body_types(&mut f.body,names);},
             TopLevelDecl::Routine(r)=>{for p in &mut r.params{Self::qualify_type(&mut p.param_type,names);}Self::qualify_body_types(&mut r.body,names);},
             TopLevelDecl::Loop(l)=>Self::qualify_body_types(&mut l.body,names),
@@ -191,6 +200,7 @@ impl PackageManager {
         let mut bound = outer.clone();
         for stmt in body {
             match stmt {
+                Statement::Const(c)=>{Self::qualify_expr(&mut c.value,names,&bound);bound.insert(c.name.clone());},
                 Statement::VarDecl { name, value, .. } => { Self::qualify_expr(value, names, &bound); bound.insert(name.clone()); }
                 Statement::ExprStmt(e) | Statement::Spawn(e) | Statement::Throw(e) | Statement::MemorySet { value: e, .. } => Self::qualify_expr(e, names, &bound),
                 Statement::Signal { loop_name, payload } => { if let Some(full) = names.get(loop_name) { *loop_name = full.clone(); } Self::qualify_expr(payload, names, &bound); }
@@ -244,7 +254,7 @@ impl PackageManager {
         }
 
         // Recursively resolve imports of the imported package
-        let resolved_prog = self.resolve_program(raw_prog)?;
+        let resolved_prog = self.resolve_imports(raw_prog)?;
 
         self.loading_stack.remove(pkg_name);
         self.loaded_packages.insert(pkg_name.to_string(), resolved_prog.clone());
