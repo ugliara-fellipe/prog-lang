@@ -120,7 +120,7 @@ Não há operador postfixo `?`, notação `T?`, desembrulhamento que ignore os c
 de erro nem propagação automática de `Err` nesta implementação. Use os padrões
 ou os helpers tipados.
 
-Exemplo executável: [19_option_result.lia](programs/19_option_result.lia).
+Exemplo executável: [19_option_result.lia](../../programs/19_option_result.lia).
 
 Construtores de enums definidos pelo programa têm prioridade sobre nomes
 curtos do prelude implícito. Se um enum local define `Some`, use

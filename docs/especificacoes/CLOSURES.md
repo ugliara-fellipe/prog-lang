@@ -82,4 +82,4 @@ anônima e bounds genéricos não fazem parte desta sintaxe.
 As chamadas em posição de retorno também utilizam o trampolim de
 [TAILCALL.md](TAILCALL.md), incluindo `tailcall` explícito nos corpos.
 
-Exemplo completo: [18_closures.lia](programs/18_closures.lia).
+Exemplo completo: [18_closures.lia](../../programs/18_closures.lia).

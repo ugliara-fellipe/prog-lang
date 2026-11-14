@@ -123,6 +123,6 @@ de configuração e fiscalização de recursos pertence ao item 12
 (`budget`); `const` fornece os valores para consumidores que
 aceitam limites.
 
-Veja [programs/22_constants.lia](programs/22_constants.lia) para um
-programa executável e [tests/constants.rs](tests/constants.rs) para
+Veja [programs/22_constants.lia](../../programs/22_constants.lia) para um
+programa executável e [tests/constants.rs](../../tests/constants.rs) para
 os casos aceitos e rejeitados.

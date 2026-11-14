@@ -6,12 +6,19 @@ This is the reference implementation in **Rust** of the compiler and runtime for
 
 Termination guarantees cover Lia code. External C implementations form an explicit trust boundary: termination is assumed by programmer contract, and optional cost annotations supply trusted complexity bounds.
 
+As especificações e explicações estão em [docs/especificacoes](docs/especificacoes/README.md).
+As pendências e os resultados da revisão do projeto ficam no [TODO.md](TODO.md).
+
 ## 🚀 Project Architecture
 
 The project is structured into modular layers:
 
 ```text
 lia/
+├── TODO.md                 # Project audit and pending work
+├── docs/
+│   ├── especificacoes/     # Language definitions and feature explanations
+│   └── README.md          # Static website and documentation navigation
 ├── grammars/
 │   └── Lia.g4         # ANTLR4 Grammar Specification (100% English)
 ├── programs/               # Test Suite Programs Covering Language Features
@@ -247,7 +254,7 @@ routine main() {
 The compiler propagates possible function targets to a fixed point and uses
 them for cycle, termination, and complexity checks. Unresolved indirect calls
 and indirect cycles are rejected. Capturing closures and generic functions are described in
-[CLOSURES.md](CLOSURES.md) and [GENERICOS.md](GENERICOS.md). See the [mathematical model](ORDEM_SUPERIOR.md) and
+[CLOSURES.md](docs/especificacoes/CLOSURES.md) and [GENERICOS.md](docs/especificacoes/GENERICOS.md). See the [mathematical model](docs/especificacoes/ORDEM_SUPERIOR.md) and
 [executable example](programs/15_higher_order.lia).
 
 ### Closures with value capture
@@ -264,7 +271,7 @@ func adder(base: Int) -> (Int) -> Int {
 Returned closures retain their copied environments. They can be passed to
 functions and routines, stored in lists or enum variants, and copied through
 `spawn`. Capturing references or data containing references is rejected.
-See [CLOSURES.md](CLOSURES.md) and [18_closures.lia](programs/18_closures.lia).
+See [CLOSURES.md](docs/especificacoes/CLOSURES.md) and [18_closures.lia](programs/18_closures.lia).
 
 ### Tail calls
 
@@ -283,7 +290,7 @@ func count(items: List[Int], acc: Int) -> Int {
 
 Tail calls preserve pending exception handlers and argument evaluation order.
 Structural termination checks and indirect-cycle rejection still apply.
-See [TAILCALL.md](TAILCALL.md) and [20_tailcalls.lia](programs/20_tailcalls.lia).
+See [TAILCALL.md](docs/especificacoes/TAILCALL.md) and [20_tailcalls.lia](programs/20_tailcalls.lia).
 
 ### Copy / Reference Assignment Rules
 
@@ -359,7 +366,7 @@ MIT License - Feel free to contribute!
 
 Parametric declarations such as `func identity<T>(x: T) -> T { x }` support
 inferred calls (`identity(3)`) and explicit specialization (`identity<Int>(3)`).
-See [GENERICOS.md](GENERICOS.md) and [16_generics.lia](programs/16_generics.lia)
+See [GENERICOS.md](docs/especificacoes/GENERICOS.md) and [16_generics.lia](programs/16_generics.lia)
 for generic callbacks, lists, records, and routine arguments.
 
 ### Algebraic data types
@@ -367,7 +374,7 @@ for generic callbacks, lists, records, and routine arguments.
 Declare discriminated values with `enum Result { Ok(Int), Err(String) }` and
 inspect them with exhaustive `match` patterns. Generic and recursive enums,
 qualified constructors, and copied actor arguments are supported. See
-[ENUMS.md](ENUMS.md) and [17_enums.lia](programs/17_enums.lia).
+[ENUMS.md](docs/especificacoes/ENUMS.md) and [17_enums.lia](programs/17_enums.lia).
 
 ### Optional values and results
 
@@ -375,7 +382,7 @@ qualified constructors, and copied actor arguments are supported. See
 are built into the default scope, with no imports required. Helpers such as `option.map`, `option.unwrap_or`,
 and `result.and_then` are ordinary typed Lia functions bundled with the compiler.
 Custom sum definitions use `type Maybe<T> = Some(T) | None`.
-See [OPCIONAIS.md](OPCIONAIS.md) and [19_option_result.lia](programs/19_option_result.lia).
+See [OPCIONAIS.md](docs/especificacoes/OPCIONAIS.md) and [19_option_result.lia](programs/19_option_result.lia).
 
 ### Dictionaries and JSON
 
@@ -384,7 +391,7 @@ Use `Dict[T]` for String keys and typed values: `let d: Dict[Int] = {count: 3}`.
 `dict.set(d, "count", 8)` returns an independent updated value.
 Use `Dict[Json]` for heterogeneous JSON data and `import json` for
 `json.parse_dict(text)` / `json.stringify(data)`, returning `Result`.
-See [DICIONARIOS.md](DICIONARIOS.md) and [21_dictionary_json.lia](programs/21_dictionary_json.lia).
+See [DICIONARIOS.md](docs/especificacoes/DICIONARIOS.md) and [21_dictionary_json.lia](programs/21_dictionary_json.lia).
 
 ### Compile-time constants
 
@@ -394,7 +401,7 @@ overflow and division by zero are compilation errors.
 `for i in MAX_ITER { ... }` iterates from zero to the exclusive bound
 without allocating a list. Constants support imports and are stored
 as precomputed typed data in compiled artifacts.
-See [CONSTANTES.md](CONSTANTES.md) and [22_constants.lia](programs/22_constants.lia).
+See [CONSTANTES.md](docs/especificacoes/CONSTANTES.md) and [22_constants.lia](programs/22_constants.lia).
 
 ### Doc-strings and API documentation
 
@@ -402,7 +409,7 @@ Use `///` before functions, routines, loops, constants, types, record fields
 and enum variants. Comment blocks preserve Markdown paragraphs and code examples.
 `lia doc file.lia` prints the API as Markdown; `lia doc file.lia -o api.md`
 writes a file after semantic validation, without running the program.
-See [DOCSTRINGS.md](DOCSTRINGS.md) and the [generated example](docs/docstrings-api.md).
+See [DOCSTRINGS.md](docs/especificacoes/DOCSTRINGS.md) and the [generated example](docs/docstrings-api.md).
 
 ### Pattern guards
 
@@ -410,7 +417,7 @@ Match arms support boolean conditions: `Some(n) if n > 0 => n`.
 The guard runs after its pattern matches and can use the pattern bindings.
 A false guard continues to the next arm; evaluation failures propagate.
 Guarded arms require exhaustive coverage from arms without guards.
-See [GUARDS.md](GUARDS.md) and [24_pattern_guards.lia](programs/24_pattern_guards.lia).
+See [GUARDS.md](docs/especificacoes/GUARDS.md) and [24_pattern_guards.lia](programs/24_pattern_guards.lia).
 
 ### Pipe operators
 
@@ -418,7 +425,7 @@ Use `value |> transform |> serialize` for forward application, or
 `serialize <| transform <| value` for backward application.
 `transform >>> serialize` and `transform ->> serialize` create reusable
 unary function compositions, with checked intermediate types and value copies.
-See [PIPES.md](PIPES.md) and [25_pipes.lia](programs/25_pipes.lia).
+See [PIPES.md](docs/especificacoes/PIPES.md) and [25_pipes.lia](programs/25_pipes.lia).
 
 ### Interactive REPL
 
@@ -426,7 +433,7 @@ Run `lia repl` for expressions, persistent value bindings, declarations and
 validated isolated routine execution. Multiline input is supported.
 Use `:type expression`, `:bindings`, `:reset`, `:abort` and `:quit`.
 `lia repl --base-dir programs` selects the package directory.
-See [REPL.md](REPL.md) for session semantics and examples.
+See [REPL.md](docs/especificacoes/REPL.md) for session semantics and examples.
 
 ### C interoperability
 
@@ -438,4 +445,4 @@ provide a trusted bound; otherwise cost remains unknown. `lia externs file.lia`
 lists the external bindings potentially used, with locations, callers and costs.
 Building requires a C compiler, ar,
 pkg-config and libffi development files.
-See [FFI.md](FFI.md) for ABI contracts and the native trust boundary.
+See [FFI.md](docs/especificacoes/FFI.md) for ABI contracts and the native trust boundary.

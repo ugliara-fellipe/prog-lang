@@ -82,4 +82,4 @@ definir tipos opcionais e resultados próprios. A sintaxe de soma
 estão descritos em [OPCIONAIS.md](OPCIONAIS.md); não há conversão implícita
 entre presença, ausência e valores comuns.
 
-Exemplo executável: [17_enums.lia](programs/17_enums.lia).
+Exemplo executável: [17_enums.lia](../../programs/17_enums.lia).

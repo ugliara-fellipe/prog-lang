@@ -85,5 +85,5 @@ Pipes não são expressões constantes de compilação: inicializadores
 `const` continuam restritos à linguagem de dados descrita em
 [CONSTANTES.md](CONSTANTES.md).
 
-Veja [programs/25_pipes.lia](programs/25_pipes.lia) e
-[tests/pipes.rs](tests/pipes.rs).
+Veja [programs/25_pipes.lia](../../programs/25_pipes.lia) e
+[tests/pipes.rs](../../tests/pipes.rs).

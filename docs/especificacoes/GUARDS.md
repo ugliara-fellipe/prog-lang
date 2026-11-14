@@ -94,7 +94,7 @@ posição final de uma função ou closure. Chamadas dentro de closures
 criadas no guard seguem as posições de retorno da própria closure.
 
 Artefatos antigos, sem o campo opcional de guard, continuam aceitos.
-Veja [programs/24_pattern_guards.lia](programs/24_pattern_guards.lia)
+Veja [programs/24_pattern_guards.lia](../../programs/24_pattern_guards.lia)
 para um exemplo com opcionais, callbacks, dicionários, closures e
-`spawn`, e [tests/pattern_guards.rs](tests/pattern_guards.rs) para
+`spawn`, e [tests/pattern_guards.rs](../../tests/pattern_guards.rs) para
 casos aceitos e rejeitados.

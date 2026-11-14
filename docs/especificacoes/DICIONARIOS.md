@@ -114,5 +114,5 @@ Em braços de `match`, chaves logo após `=>` delimitam um bloco.
 Para retornar um literal de dicionário diretamente, escreva
 `Some(x) => ({value: x})`.
 
-Veja [programs/21_dictionary_json.lia](programs/21_dictionary_json.lia)
+Veja [programs/21_dictionary_json.lia](../../programs/21_dictionary_json.lia)
 para um exemplo executável com JSON, closures e `spawn`.

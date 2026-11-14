@@ -114,4 +114,4 @@ são recuperáveis: a sessão continua e seu encerramento normal não funciona
 como um status de validação de arquivo. Para compilação com status de
 erro, use os comandos de compilação existentes.
 
-Os testes de integração estão em [tests/repl.rs](tests/repl.rs).
+Os testes de integração estão em [tests/repl.rs](../../tests/repl.rs).

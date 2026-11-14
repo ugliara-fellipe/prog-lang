@@ -91,5 +91,5 @@ e comentários de constantes globais, que são removidas pela avaliação
 em tempo de compilação. Constantes locais podem ter metadados no AST
 do parser, mas não são listadas na API pública gerada.
 
-Veja o [programa de exemplo](programs/23_docstrings.lia) e sua
-[documentação gerada](docs/docstrings-api.md).
+Veja o [programa de exemplo](../../programs/23_docstrings.lia) e sua
+[documentação gerada](../docstrings-api.md).

@@ -34,7 +34,7 @@ superior; valores de função possuem uma assinatura instanciada.
 
 `std.empty<T>()` e `std.prepend<T>(valor, lista)` possuem tipagem polimórfica no
 verificador, permitindo implementar `map<T, U>`. Veja o exemplo executável
-[16_generics.lia](programs/16_generics.lia).
+[16_generics.lia](../../programs/16_generics.lia).
 
 A cópia por valor e o confinamento de referências permanecem verificados:
 instanciar `T` com `Ref[Int]` não permite atravessar `spawn`. A rotina de entrada

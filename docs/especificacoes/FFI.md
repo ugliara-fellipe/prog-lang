@@ -176,9 +176,9 @@ A implementação usa `libffi` e o carregador POSIX de bibliotecas. São
 necessários um compilador C, `ar`, `pkg-config` e os headers e bibliotecas
 de desenvolvimento de `libffi`. A plataforma validada é Linux.
 O build consulta `pkg-config` e compila o bridge em
-[native/ffi.c](native/ffi.c); `CC` e `AR` podem escolher os executáveis
+[native/ffi.c](../../native/ffi.c); `CC` e `AR` podem escolher os executáveis
 da toolchain.
 
-Veja [programs/27_ffi.lia](programs/27_ffi.lia) para execução com o runtime C
-do processo e [tests/ffi.rs](tests/ffi.rs) para testes que compilam bibliotecas
+Veja [programs/27_ffi.lia](../../programs/27_ffi.lia) para execução com o runtime C
+do processo e [tests/ffi.rs](../../tests/ffi.rs) para testes que compilam bibliotecas
 C reais, incluindo assinaturas mistas, strings, pacotes, artefatos e erros.

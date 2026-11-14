@@ -1,7 +1,7 @@
 # Modelo para funções de ordem superior na Lia
 
 Este documento registra o modelo implementado para o item 6 de
-[TODO.md](TODO.md). O compilador e o runtime aceitam funções nomeadas sem
+[TODO.md](../../TODO.md). O compilador e o runtime aceitam funções nomeadas sem
 captura; os testes verificam fluxo, tipos, execução, terminação e custo.
 
 O núcleo inicial compreende funções **nomeadas e sem captura**. Elas podem ser
@@ -178,7 +178,7 @@ A API `ComplexityAnalyzer::try_analyze` reporta falhas na resolução ou ciclos;
 custo conserva as classes assintóticas já utilizadas pela Lia, incluindo a
 aproximação existente de recursão estrutural; não é uma implementação de AARA.
 
-Exemplo completo: [15_higher_order.lia](programs/15_higher_order.lia).
+Exemplo completo: [15_higher_order.lia](../../programs/15_higher_order.lia).
 
 ## Referências
 

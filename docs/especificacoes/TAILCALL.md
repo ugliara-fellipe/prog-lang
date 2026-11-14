@@ -95,4 +95,4 @@ transições por closures. Também
 verificam chamadas genéricas, closures, argumentos simultâneos, handlers,
 assinaturas incorretas e usos fora de posição de cauda.
 
-Exemplo executável: [20_tailcalls.lia](programs/20_tailcalls.lia).
+Exemplo executável: [20_tailcalls.lia](../../programs/20_tailcalls.lia).

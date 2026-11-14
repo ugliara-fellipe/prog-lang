@@ -10,3 +10,9 @@ signals, imports, static analysis, compilation, and runtime execution.
 To publish it with GitHub Pages, open the repository **Settings → Pages**,
 select **Deploy from a branch**, choose the branch containing this folder, and
 set the source folder to **`/docs`**. No build command is required.
+
+## Language specifications
+
+The [specification index](especificacoes/README.md) collects the language models
+and feature explanations. The project [TODO](../TODO.md) records implementation
+issues and a separate documentation/commenting backlog.
