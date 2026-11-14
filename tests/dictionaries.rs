@@ -32,7 +32,6 @@ fn invalid_keys_payloads_and_non_json_values_are_rejected(){
         "import json func serialize<T>(x:T)->Result[String,String]{json.stringify(x)}",
         "import dict routine Worker(d:Dict[Ref[Int]]){} routine main(){spawn Worker({x:ref 1})}",
         "import dict routine main(){let d={x:ref 1} let f=||->Int{dict.len(d)}}",
-        "routine main(){let d={x:1} let x=d[\"x\"]}",
         "import dict func f()->Int{{x:missing()} 1}",
         "import dict routine main(){let d={x:message}}",
     ]{assert!(!valid(source),"{source}");}

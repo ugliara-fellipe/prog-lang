@@ -33,6 +33,7 @@ fn constant_expression(expr:&Expr)->String{
 }
 fn declaration_signature(decl:&TopLevelDecl)->Option<String>{
     Some(match decl {
+        TopLevelDecl::Func(f) if f.foreign.is_some()=>{let foreign=f.foreign.as_ref().unwrap();format!("extern {} fn {}({}) -> {}{} as {}{};",serde_json::to_string(&foreign.abi).unwrap(),f.name,parameters(&f.params),type_signature(f.return_type.as_ref().unwrap()),foreign.library.as_ref().map(|p|format!(" from {}",serde_json::to_string(p).unwrap())).unwrap_or_default(),serde_json::to_string(&foreign.symbol).unwrap(),foreign.cost.as_ref().map(|c|format!(" cost {}",serde_json::to_string(c).unwrap())).unwrap_or_default())},
         TopLevelDecl::Func(f)=>format!("func {}{}({}){}",f.name,generics(&f.type_params),parameters(&f.params),f.return_type.as_ref().map(|t|format!(" -> {}",type_signature(t))).unwrap_or_default()),
         TopLevelDecl::Routine(r)=>format!("routine {}{}({})",r.name,generics(&r.type_params),parameters(&r.params)),
         TopLevelDecl::Loop(l)=>format!("loop {}()",l.name),

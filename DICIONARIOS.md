@@ -1,13 +1,12 @@
 # Dicionários e JSON
 
 `Dict[T]` associa chaves `String` a valores de tipo `T`. O tipo é
-embutido; `import dict` fornece as operações e importa `Option` para
-consultas seguras. Os módulos `dict` e `json` acompanham o executável,
-sem exigir arquivos externos.
+integrado à linguagem, assim como `List[T]`. Literais, consultas e
+operações `dict.*` funcionam sem import. `Option[T]`, `Some` e
+`None` também fazem parte do escopo padrão. Somente as operações
+de conversão `json.*` exigem `import json`.
 
 ```lia
-import dict
-import option
 
 func example() -> Int {
     let original: Dict[Int] = {"count": 3, other: 4}
@@ -22,8 +21,8 @@ texto; `{name: value}` equivale a `{"name": value}`. Chaves repetidas
 no mesmo literal são erros de sintaxe. Vírgula final é permitida.
 Consultas aceitam expressões de tipo `String`, por exemplo `d[key()]`.
 A consulta `d["missing"]` retorna `None`; uma chave presente retorna
-`Some(valor)`. Use `import dict` ou `import option` para disponibilizar
-o tipo de retorno das consultas. Acesso por ponto não consulta chaves.
+`Some(valor)`, sem precisar importar o tipo de retorno. Acesso por ponto
+não consulta chaves.
 
 Valores homogêneos têm seu tipo inferido: `{a: 1, b: 2}` é
 `Dict[Int]`. Valores de tipos JSON diferentes podem ser reunidos em
@@ -65,8 +64,6 @@ explícita de tipo.
 
 ```lia
 import json
-import dict
-import option
 
 func read_name(text: String) -> Option[String] {
     match json.parse_dict(text) {
@@ -95,7 +92,8 @@ func match_name(data: Dict[Json]) -> Option[String] {
 | `json.is_null(value)` | `Bool` |
 | `json.null()` | `Json` |
 
-`import json` disponibiliza também os tipos `Option` e `Result`.
+`Option` e `Result` estão no escopo padrão, independentemente de
+`import json`.
 Falhas de parsing e conversão retornam `Err(mensagem)`; consultas de
 tipo incompatível retornam `None`. Um valor JSON `null` presente
 em um dicionário produz `Some(null)`, distinto de uma chave ausente.

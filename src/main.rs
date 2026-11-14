@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|a| a != "--verbose" && a != "-v")
         .collect();
 
-    if verbose && !matches!(args.get(1).map(String::as_str),Some("doc"|"docs")) {
+    if verbose && !matches!(args.get(1).map(String::as_str),Some("doc"|"docs"|"externs")) {
         println!("============================================================");
         println!(" Lia - Compiler and Runtime for Finite Routines ");
         println!("============================================================\n");
@@ -30,9 +30,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() > 1 {
         let cmd = &args[1];
 
+        if cmd=="repl"{
+            let base=if args.len()==2{std::env::current_dir()?}else if args.len()==4 && args[2]=="--base-dir"{args[3].clone().into()}else{return Err("Usage: lia repl [--base-dir <directory>]".into());};
+            if !base.is_dir(){return Err("REPL base directory does not exist".into());}
+            lia::repl::install_interrupt_handler()?;
+            lia::repl::run_cli(base)?;
+            return Ok(());
+        }
+
         // 1. Test suite runner command
         if cmd == "--test-all" || cmd == "--check-all" {
             run_test_suite_cli().await?;
+            return Ok(());
+        }
+
+        if cmd=="externs"{
+            if args.len()<3{return Err("Usage: lia externs <file.lia|file.liac> [--entry name] [--all] [--json]".into());}
+            let mut all=false;let mut json=false;let mut entry=None;let mut i=3;
+            while i<args.len(){match args[i].as_str(){
+                "--all"=>all=true,"--json"=>json=true,
+                "--entry" if i+1<args.len()=>{i+=1;entry=Some(args[i].as_str());},
+                _=>return Err("Usage: lia externs <file.lia|file.liac> [--entry name] [--all] [--json]".into())
+            }i+=1;}
+            list_foreign_functions(&args[2],entry,all,json)?;
             return Ok(());
         }
 
@@ -141,7 +161,7 @@ fn query_complexity(
     let raw_program = parser.parse_program()?;
     let base_dir = Path::new(input_path).parent().unwrap_or_else(|| Path::new("."));
     let mut pkg_mgr = PackageManager::new(base_dir);
-    let program = pkg_mgr.resolve_program(raw_program)?;
+    let program = pkg_mgr.resolve_source(raw_program,Path::new(input_path))?;
 
     CallGraphValidator::new().build_and_validate(&program)?;
     TypeChecker::new().check_program(&program)?;
@@ -184,7 +204,7 @@ fn compile_to_artifact(input_path: &str, output_path: &str) -> Result<(), Box<dy
     // Resolve packages/imports
     let base_dir = Path::new(input_path).parent().unwrap_or_else(|| Path::new("."));
     let mut pkg_mgr = PackageManager::new(base_dir);
-    let program = pkg_mgr.resolve_program(raw_program)?;
+    let program = pkg_mgr.resolve_source(raw_program,Path::new(input_path))?;
     println!("  -> AST constructed with {} declarations (including imports).", program.declarations.len());
 
     // 2. Semantic Validations
@@ -217,7 +237,9 @@ async fn run_compiled_artifact(artifact_path: &str, verbose: bool) -> Result<(),
     }
     let bytes = fs::read(artifact_path)?;
     let program: Program = serde_json::from_slice(&bytes)?;
+    let program = lia::semantic::builtins::augment(&program)?.unwrap_or(program);
     let program = lia::semantic::constants::lower_program(&program)?;
+    let program = lia::semantic::pipes::lower_program(&program)?;
     // Serialized AST is an input format, not a proof of validation. Rebuild
     // flow information and recheck it before executing any artifact.
     CallGraphValidator::new().build_and_validate(&program)?;
@@ -256,7 +278,7 @@ async fn compile_and_run_file(file_path: &str, verbose: bool) -> Result<(), Box<
 
     let base_dir = Path::new(file_path).parent().unwrap_or_else(|| Path::new("."));
     let mut pkg_mgr = PackageManager::new(base_dir);
-    let program = match pkg_mgr.resolve_program(raw_program) {
+    let program = match pkg_mgr.resolve_source(raw_program,Path::new(file_path)) {
         Ok(prog) => {
             if verbose {
                 println!("  -> Success: AST constructed with {} declarations (including imports).", prog.declarations.len());
@@ -438,6 +460,10 @@ async fn run_test_suite_cli() -> Result<(), Box<dyn std::error::Error>> {
         "programs/21_dictionary_json.lia",
         "programs/22_constants.lia",
         "programs/23_docstrings.lia",
+        "programs/24_pattern_guards.lia",
+        "programs/25_pipes.lia",
+        "programs/26_builtin_collections.lia",
+        "programs/27_ffi.lia",
         "programs/math.lia",
         "programs/std.lia",
     ];
@@ -516,7 +542,7 @@ fn annotate_complexity(input_path: &str, output_path: &str) -> Result<(), Box<dy
     let raw_program = parser.parse_program()?;
     let base_dir = Path::new(input_path).parent().unwrap_or_else(|| Path::new("."));
     let mut pkg_mgr = PackageManager::new(base_dir);
-    let program = pkg_mgr.resolve_program(raw_program)?;
+    let program = pkg_mgr.resolve_source(raw_program,Path::new(input_path))?;
     CallGraphValidator::new().build_and_validate(&program)?;
     TypeChecker::new().check_program(&program)?;
     TerminationChecker::verify_program(&program)?;
@@ -563,6 +589,9 @@ fn inject_complexity_comments(source: &str, entries: &[lia::semantic::complexity
         let maybe_entry = if trimmed.starts_with("func ") {
             let name = trimmed["func ".len()..].split(['(', '<', ' ']).next().unwrap_or("").trim();
             lookup.get(&("func", name)).cloned()
+        } else if trimmed.starts_with("extern ") {
+            let name=trimmed.split_once(" fn ").or_else(||trimmed.split_once(" func ")).map(|(_,rest)|rest.split(['(', ' ']).next().unwrap_or(""));
+            name.and_then(|name|lookup.get(&("func",name)).cloned())
         } else if trimmed.starts_with("routine ") {
             let name = trimmed["routine ".len()..].split(['(', '<', ' ']).next().unwrap_or("").trim();
             lookup.get(&("routine", name)).cloned()
@@ -593,7 +622,7 @@ fn generate_documentation(input_path:&str,output_path:Option<&str>)->Result<(),B
     let source=fs::read_to_string(input_path)?;
     let raw=Parser::new(&source)?.parse_program()?;
     let base=Path::new(input_path).parent().unwrap_or_else(||Path::new("."));
-    let resolved=PackageManager::new(base).resolve_program(raw.clone())?;
+    let resolved=PackageManager::new(base).resolve_source(raw.clone(),Path::new(input_path))?;
     CallGraphValidator::new().build_and_validate(&resolved)?;
     TypeChecker::new().check_program(&resolved)?;
     TerminationChecker::verify_program(&resolved)?;
@@ -605,5 +634,23 @@ fn generate_documentation(input_path:&str,output_path:Option<&str>)->Result<(),B
         }
         fs::write(output,markdown)?;
     }else{print!("{}",markdown);}
+    Ok(())
+}
+
+fn list_foreign_functions(path:&str,entry:Option<&str>,all:bool,json:bool)->Result<(),Box<dyn std::error::Error>>{
+    let program=if path.ends_with(".liac"){
+        let raw:Program=serde_json::from_slice(&fs::read(path)?)?;
+        let raw=lia::semantic::builtins::augment(&raw)?.unwrap_or(raw);
+        let raw=lia::semantic::constants::lower_program(&raw)?;
+        lia::semantic::pipes::lower_program(&raw)?
+    }else{
+        let raw=Parser::new(&fs::read_to_string(path)?)?.parse_program()?;
+        PackageManager::new(Path::new(path).parent().unwrap_or(Path::new("."))).resolve_source(raw,Path::new(path))?
+    };
+    CallGraphValidator::new().build_and_validate(&program)?;
+    TypeChecker::new().check_program(&program)?;
+    TerminationChecker::verify_program(&program)?;
+    let entries=lia::foreign_report::inventory(&program,entry,all)?;
+    if json{println!("{}",serde_json::to_string_pretty(&entries)?);}else{print!("{}",lia::foreign_report::render_text(&entries));}
     Ok(())
 }

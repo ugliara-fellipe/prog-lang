@@ -1,8 +1,5 @@
 import std
-import dict
 import json
-import option
-import result
 
 func lookup<T>(values: Dict[T], key: String) -> Option[T] { values[key] }
 routine Worker(values: Dict[Int]) {

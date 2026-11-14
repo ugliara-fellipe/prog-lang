@@ -24,6 +24,7 @@ use crate::semantic::{flow::FunctionFlow, SemanticError};
 /// Symbolic worst-case complexity.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Complexity {
+    Unknown,
     /// O(1) – constant work.
     Constant,
     /// O(N^k) where k ≥ 1 – polynomial in the size of the inductive input.
@@ -34,9 +35,10 @@ impl Complexity {
     /// Multiply two complexities (nested loops / calls).
     pub fn multiply(&self, other: &Self) -> Self {
         match (self, other) {
+            (Complexity::Unknown,_)|(_,Complexity::Unknown)=>Complexity::Unknown,
             (Complexity::Constant, x) | (x, Complexity::Constant) => x.clone(),
             (Complexity::Polynomial(a), Complexity::Polynomial(b)) => {
-                Complexity::Polynomial(a + b)
+                a.checked_add(*b).map(Complexity::Polynomial).unwrap_or(Complexity::Unknown)
             }
         }
     }
@@ -44,6 +46,7 @@ impl Complexity {
     /// Take the maximum (sequential composition / match branches).
     pub fn max(&self, other: &Self) -> Self {
         match (self, other) {
+            (Complexity::Unknown,_)|(_,Complexity::Unknown)=>Complexity::Unknown,
             (Complexity::Polynomial(a), Complexity::Polynomial(b)) => {
                 Complexity::Polynomial(*a.max(b))
             }
@@ -56,6 +59,7 @@ impl Complexity {
     /// Human-readable Big-O notation.
     pub fn to_big_o(&self) -> String {
         match self {
+            Complexity::Unknown=>"unknown (foreign code)".into(),
             Complexity::Constant => "O(1)".to_string(),
             Complexity::Polynomial(1) => "O(N)".to_string(),
             Complexity::Polynomial(2) => "O(N²)".to_string(),
@@ -94,6 +98,8 @@ impl ComplexityAnalyzer {
     }
 
     pub fn try_analyze(&mut self, program: &Program) -> Result<Vec<ComplexityEntry>, SemanticError> {
+        if let Some(program)=crate::semantic::builtins::augment(program)?{return self.try_analyze(&program);}
+        if crate::semantic::pipes::needs_lowering(program){return self.try_analyze(&crate::semantic::pipes::lower_program(program)?);}
         if crate::semantic::constants::needs_lowering(program){return self.try_analyze(&crate::semantic::constants::lower_program(program)?);}
         crate::semantic::dag::CallGraphValidator::new().build_and_validate(program)?;
         self.flow = Some(FunctionFlow::analyze(program)?);
@@ -122,7 +128,7 @@ impl ComplexityAnalyzer {
             for decl in &program.declarations {
                 if let TopLevelDecl::Func(f) = decl {
                     self.ignored_function = Some(f.name.clone());
-                    let cost = if recursive_funcs.contains(&f.name) {
+                    let cost = if f.foreign.is_some(){crate::ffi::effective_cost(f)}else if recursive_funcs.contains(&f.name) {
                         self.recursive_complexity(f, &recursive_funcs)
                     } else {
                         self.complexity_of_body(&f.body, &recursive_funcs)
@@ -148,7 +154,7 @@ impl ComplexityAnalyzer {
                     // such as insertion sort: `insertion_sort` calls the
                     // O(N) helper `insert_sorted` once per input element.
                     self.ignored_function = Some(f.name.clone());
-                    let complexity = if recursive_funcs.contains(&f.name) {
+                    let complexity = if f.foreign.is_some(){crate::ffi::effective_cost(f)}else if recursive_funcs.contains(&f.name) {
                         self.recursive_complexity(f, &recursive_funcs)
                     } else {
                         self.complexity_of_body(&f.body, &recursive_funcs)
@@ -242,7 +248,7 @@ impl ComplexityAnalyzer {
             // `match` → max over all branches.
             Statement::Match { target, cases } => cases
                 .iter()
-                .map(|c| self.complexity_of_body(&c.body, recursive))
+                .map(|c| self.complexity_of_body(&c.body, recursive).max(&c.guard.as_ref().map(|g|self.complexity_of_expr(g,recursive)).unwrap_or(Complexity::Constant)))
                 .fold(self.complexity_of_expr(target, recursive), |acc, c| acc.max(&c)),
         }
     }

@@ -15,7 +15,7 @@ fn body(statements:&[Statement],tail:bool)->Result<(),SemanticError>{
         Statement::Const(c)=>expr(&c.value,false)?,
         Statement::ExprStmt(e)=>expr(e,last)?,
         Statement::VarDecl{value:e,..}|Statement::Spawn(e)|Statement::Throw(e)|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>expr(e,false)?,
-        Statement::Match{target,cases}=>{expr(target,false)?;for case in cases{body(&case.body,last)?;}},
+        Statement::Match{target,cases}=>{expr(target,false)?;for case in cases{if let Some(g)=&case.guard{expr(g,false)?;}body(&case.body,last)?;}},
         Statement::TryCatch{try_body,catch_body,..}=>{body(try_body,last)?;body(catch_body,last)?;},
         Statement::ForLoop{collection,body:inner,..}=>{expr(collection,false)?;body(inner,false)?;},
         Statement::Terminate=>{}
@@ -33,7 +33,7 @@ fn expr(e:&Expr,tail:bool)->Result<(),SemanticError>{
         Expr::DictLiteral(items)=>for (_,v) in items{expr(v,false)?;},
         Expr::Index{target,key}=>{expr(target,false)?;expr(key,false)?;},
         Expr::IndirectCall{target,args}=>{expr(target,false)?;for a in args{expr(a,false)?;}},
-        Expr::BinaryOp{left,right,..}=>{expr(left,false)?;expr(right,false)?;},
+        Expr::Compose{left,right}|Expr::BinaryOp{left,right,..}=>{expr(left,false)?;expr(right,false)?;},
         Expr::Specialize{target,..}|Expr::RefCreate(target)|Expr::MemberAccess{target,..}=>expr(target,false)?,_=>{}
     }Ok(())
 }

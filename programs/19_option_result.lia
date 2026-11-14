@@ -1,6 +1,4 @@
 import std
-import option
-import result
 
 type Maybe<T> = Present(T) | Absent
 func safe_divide(a: Int, b: Int) -> Result[Int, String] {

@@ -19,6 +19,7 @@ pub enum TokenKind {
     Type,
     Enum,
     Func,
+    Extern,
     Routine,
     Loop,
     Import,
@@ -36,6 +37,7 @@ pub enum TokenKind {
     Em,
     In,
     Match,
+    If,
     Ref,
     Receive,
     Memory,
@@ -48,6 +50,7 @@ pub enum TokenKind {
     LBracket,
     RBracket,
     Colon,
+    Semicolon,
     Comma,
     Dot,
     Arrow,    // ->
@@ -65,6 +68,10 @@ pub enum TokenKind {
     Star,
     Slash,
     Pipe,
+    PipeForward,
+    PipeBackward,
+    ComposeForward,
+    ComposeArrow,
     // Literals & Identifiers
     Id(String),
     Int(i64),
@@ -171,6 +178,7 @@ impl<'a> Lexer<'a> {
                 "type" => TokenKind::Type,
                 "enum" => TokenKind::Enum,
                 "func" => TokenKind::Func,
+                "extern" => TokenKind::Extern,
                 "routine" => TokenKind::Routine,
                 "loop" => TokenKind::Loop,
                 "import" => TokenKind::Import,
@@ -188,6 +196,7 @@ impl<'a> Lexer<'a> {
                 "in" => TokenKind::In,
                 "em" => TokenKind::Em,
                 "match" => TokenKind::Match,
+                "if" => TokenKind::If,
                 "ref" => TokenKind::Ref,
                 "message" => TokenKind::Receive,
                 "memory" => TokenKind::Memory,
@@ -255,6 +264,15 @@ impl<'a> Lexer<'a> {
             });
         }
 
+        for (spelling,kind) in [
+            (">>>",TokenKind::ComposeForward),("->>",TokenKind::ComposeArrow),
+            ("|>",TokenKind::PipeForward),("<|",TokenKind::PipeBackward)
+        ]{
+            if spelling.chars().enumerate().all(|(i,c)|self.chars.get(self.pos+i)==Some(&c)){
+                for _ in spelling.chars(){self.advance();}
+                return Ok(Token{kind,line,col});
+            }
+        }
         // Two-character operators
         if ch == '-' && self.peek_next() == Some('>') {
             self.advance();
@@ -321,6 +339,7 @@ impl<'a> Lexer<'a> {
             '[' => TokenKind::LBracket,
             ']' => TokenKind::RBracket,
             ':' => TokenKind::Colon,
+            ';' => TokenKind::Semicolon,
             ',' => TokenKind::Comma,
             '.' => TokenKind::Dot,
             '=' => TokenKind::Assign,
@@ -529,7 +548,7 @@ impl<'a> Parser<'a> {
     fn parse_top_level_decl(&mut self) -> Result<TopLevelDecl, ParseError> {
         if matches!(&self.current.kind,TokenKind::DocComment(_)){
             let documentation=self.parse_documentation()?;
-            if !matches!(self.current.kind,TokenKind::Const|TokenKind::Type|TokenKind::Enum|TokenKind::Func|TokenKind::Routine|TokenKind::Loop){return Err(self.documentation_error());}
+            if !matches!(self.current.kind,TokenKind::Extern|TokenKind::Const|TokenKind::Type|TokenKind::Enum|TokenKind::Func|TokenKind::Routine|TokenKind::Loop){return Err(self.documentation_error());}
             let mut decl=self.parse_top_level_decl()?;
             match &mut decl{
                 TopLevelDecl::Const(c)=>c.documentation=documentation,
@@ -542,6 +561,7 @@ impl<'a> Parser<'a> {
             return Ok(decl);
         }
         match self.current.kind {
+            TokenKind::Extern => self.parse_foreign_decl().map(TopLevelDecl::Func),
             TokenKind::Const => self.parse_const_decl().map(TopLevelDecl::Const),
             TokenKind::Import => self.parse_import_decl().map(TopLevelDecl::Import),
             TokenKind::Type => self.parse_type_decl().map(TopLevelDecl::Type),
@@ -629,6 +649,29 @@ impl<'a> Parser<'a> {
         Ok(EnumVariant{documentation,name,fields})
     }
 
+    fn foreign_string(&mut self)->Result<String,ParseError>{
+        if let TokenKind::Str(value)=&self.current.kind{let value=value.clone();self.advance()?;Ok(value)}
+        else{Err(ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:"expected a quoted foreign ABI, library path, symbol or cost".into()})}
+    }
+    fn parse_foreign_decl(&mut self)->Result<FuncDecl,ParseError>{
+        let line=Some(self.current.line);
+        self.expect(TokenKind::Extern)?;let abi=self.foreign_string()?;
+        if self.check(&TokenKind::Func){self.advance()?;}else{let keyword=self.expect_id()?;if keyword!="fn"{return Err(ParseError::SyntaxError{line:self.current.line,col:self.current.col,message:"expected fn or func after the foreign ABI".into()});}}
+        let name=self.expect_id()?;self.expect(TokenKind::LParen)?;let mut params=Vec::new();
+        while !self.check(&TokenKind::RParen){
+            let name=self.expect_id()?;self.expect(TokenKind::Colon)?;let param_type=self.parse_type_spec()?;
+            params.push(Param{name,param_type});if !self.check(&TokenKind::Comma){break;}self.advance()?;
+        }
+        self.expect(TokenKind::RParen)?;
+        let return_type=if self.check(&TokenKind::Arrow){self.advance()?;self.parse_type_spec()?}else{TypeSpec::Primitive("Unit".into())};
+        let mut library=None;let mut symbol=name.clone();
+        if matches!(&self.current.kind,TokenKind::Id(n) if n=="from"){self.advance()?;library=Some(self.foreign_string()?);}
+        if matches!(&self.current.kind,TokenKind::Id(n) if n=="as"){self.advance()?;symbol=self.foreign_string()?;}
+        let cost=if matches!(&self.current.kind,TokenKind::Id(n) if n=="cost"){self.advance()?;Some(self.foreign_string()?)}else{None};
+        self.expect(TokenKind::Semicolon)?;
+        Ok(FuncDecl{foreign:Some(ForeignDecl{cost,source:None,line,abi,symbol,library}),documentation:String::new(),name,type_params:vec![],params,return_type:Some(return_type),body:vec![]})
+    }
+
     fn parse_func_decl(&mut self) -> Result<FuncDecl, ParseError> {
         self.expect(TokenKind::Func)?;
         let name = self.expect_id()?;
@@ -662,6 +705,7 @@ impl<'a> Parser<'a> {
 
         let body = self.parse_block()?;
         Ok(FuncDecl {
+            foreign:None,
             documentation:String::new(),
             name,
             type_params,
@@ -927,6 +971,7 @@ impl<'a> Parser<'a> {
         let mut cases = Vec::new();
         while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
             let pattern = self.parse_pattern()?;
+            let guard=if self.check(&TokenKind::If){self.advance()?;Some(self.parse_expr()?)}else{None};
             self.expect(TokenKind::FatArrow)?;
 
             let body = if self.check(&TokenKind::LBrace) {
@@ -936,7 +981,7 @@ impl<'a> Parser<'a> {
                 vec![Statement::ExprStmt(expr)]
             };
 
-            cases.push(MatchCase { pattern, body });
+            cases.push(MatchCase { guard, pattern, body });
 
             if self.check(&TokenKind::Comma) {
                 self.advance()?;
@@ -980,7 +1025,29 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        self.parse_relational()
+        let mut left=self.parse_composition()?;
+        loop{
+            if self.check(&TokenKind::PipeForward){
+                self.advance()?;let target=self.parse_composition()?;
+                left=Self::pipe_call(target,left);
+            }else if self.check(&TokenKind::PipeBackward){
+                self.advance()?;let value=self.parse_expr()?;
+                left=Self::pipe_call(left,value);break;
+            }else{break;}
+        }
+        Ok(left)
+    }
+    fn pipe_call(target:Expr,value:Expr)->Expr{
+        if let Some(name)=Self::qualified_expr(&target){Expr::FunctionCall{name,args:vec![value]}}
+        else{Expr::IndirectCall{target:Box::new(target),args:vec![value]}}
+    }
+    fn parse_composition(&mut self)->Result<Expr,ParseError>{
+        let mut left=self.parse_relational()?;
+        while matches!(self.current.kind,TokenKind::ComposeForward|TokenKind::ComposeArrow){
+            self.advance()?;let right=self.parse_relational()?;
+            left=Expr::Compose{left:Box::new(left),right:Box::new(right)};
+        }
+        Ok(left)
     }
 
     fn parse_relational(&mut self) -> Result<Expr, ParseError> {

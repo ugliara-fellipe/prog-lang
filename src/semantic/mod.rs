@@ -1,3 +1,5 @@
+pub mod pipes;
+pub mod builtins;
 pub mod constants;
 pub mod json_types;
 pub mod tail_calls;
@@ -15,6 +17,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum SemanticError {
+    #[error("Pattern guard must have type Bool, found {0:?}")]
+    InvalidPatternGuard(crate::ast::TypeSpec),
     #[error("Compile-time constant error: {0}")]
     ConstantError(String),
     #[error("Invalid tailcall: {0}")]

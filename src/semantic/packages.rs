@@ -5,6 +5,7 @@ use crate::ast::*;
 use crate::parser::Parser;
 use crate::semantic::SemanticError;
 
+#[derive(Clone)]
 pub struct PackageManager {
     base_dir: PathBuf,
     loaded_packages: HashMap<String, Program>,
@@ -23,9 +24,29 @@ impl PackageManager {
     }
 
     /// Load and resolve all imports recursively for a main program, returning a consolidated Program
-    pub fn resolve_program(&mut self, main_prog: Program) -> Result<Program, SemanticError> {
+    pub fn resolve_source(&mut self,mut program:Program,path:&Path)->Result<Program,SemanticError>{
+        crate::ffi::set_source(&mut program,path);
+        self.resolve_program(program)
+    }
+
+    pub fn resolve_program(&mut self, mut main_prog: Program) -> Result<Program, SemanticError> {
+        Self::foreign_paths(&mut main_prog,&self.base_dir)?;
         let resolved=self.resolve_imports(main_prog)?;
-        crate::semantic::constants::lower_program(&resolved)
+        let resolved=super::builtins::augment(&resolved)?.unwrap_or(resolved);
+        let constants=crate::semantic::constants::lower_program(&resolved)?;
+        crate::semantic::pipes::lower_program(&constants)
+    }
+
+    fn foreign_paths(program:&mut Program,base:&Path)->Result<(),SemanticError>{
+        for decl in &mut program.declarations{if let TopLevelDecl::Func(f)=decl{if let Some(foreign)=&mut f.foreign{if let Some(path)=&mut foreign.library{
+            if !Path::new(path).is_absolute(){let absolute=std::env::current_dir().map_err(|e|SemanticError::PackageError(e.to_string()))?.join(base).join(&path);*path=absolute.to_string_lossy().into_owned();}
+        }}}}Ok(())
+    }
+
+    pub(crate) fn language_prelude()->Result<Program,SemanticError>{
+        let mut manager=Self::new(".");
+        let imports=["option","result","dict"].into_iter().map(|n|ImportDecl{package:n.into(),kind:ImportKind::All}).collect();
+        manager.resolve_imports(Program{imports,declarations:vec![]})
     }
 
     fn resolve_imports(&mut self, main_prog: Program) -> Result<Program, SemanticError> {
@@ -77,12 +98,29 @@ impl PackageManager {
         }
         let mut names: HashMap<String, String> = pkg_prog.declarations.iter().filter_map(Self::decl_name)
             .filter(|name| local.contains(*name)).map(|name| (name.into(), format!("{}.{}", pkg_name, name))).collect();
-        let enum_names:HashMap<String,String>=pkg_prog.declarations.iter().filter_map(|d|match d {TopLevelDecl::Type(t) if local.contains(&t.name) && !t.variants.is_empty()=>Some((t.name.clone(),names[&t.name].clone())),_=>None}).collect();
+        let mut enum_names:HashMap<String,String>=pkg_prog.declarations.iter().filter_map(|d|match d {TopLevelDecl::Type(t) if local.contains(&t.name) && !t.variants.is_empty()=>Some((t.name.clone(),names[&t.name].clone())),_=>None}).collect();
         let mut variant_names:HashMap<String,Vec<String>>=HashMap::new();
         for decl in &pkg_prog.declarations {if let TopLevelDecl::Type(t)=decl {if let Some(full)=enum_names.get(&t.name) {for v in &t.variants {
             let qualified=format!("{}.{}",full,v.name);names.insert(format!("{}.{}",t.name,v.name),qualified.clone());variant_names.entry(v.name.clone()).or_default().push(qualified);
         }}}}
+        let local_constructors:HashSet<_>=variant_names.keys().cloned().collect();
         for (short,full) in variant_names {if full.len()==1 {names.insert(short,full[0].clone());}}
+        // Resolve each module's implicit prelude in its own lexical scope.
+        // A constructor/type in the importing program must not retarget it.
+        for (ty,package,variants) in [("Option","option",vec!["Some","None"]),("Result","result",vec!["Ok","Err"])]{
+            if !local.contains(ty){
+                let owner=format!("{}.{}",package,ty);
+                enum_names.entry(ty.into()).or_insert(owner.clone());
+                names.entry(ty.into()).or_insert(owner.clone());
+                for variant in &variants{names.entry(format!("{}.{}",ty,variant)).or_insert(format!("{}.{}",owner,variant));}
+            }
+            for variant in variants{
+                if !local.contains(variant) && !local_constructors.contains(variant){
+                    names.entry(variant.into()).or_insert(format!("{}.{}.{}",package,ty,variant));
+                }
+            }
+        }
+
         let mut result = Vec::new();
         for decl in &pkg_prog.declarations {
             let Some(name) = Self::decl_name(decl) else { continue; };
@@ -137,7 +175,7 @@ impl PackageManager {
             Expr::TypeOf(name) | Expr::Variable(name) => if !bound.contains(name) { if let Some(full) = names.get(name) { *name = full.clone(); } },
             Expr::FunctionCall { name, args } => { if !bound.contains(name) { if let Some(full) = names.get(name) { *name = full.clone(); } } for arg in args { Self::qualify_expr(arg, names, bound); } }
             Expr::IndirectCall { target, args } => { Self::qualify_expr(target, names, bound); for arg in args { Self::qualify_expr(arg, names, bound); } }
-            Expr::BinaryOp { left, right, .. } => { Self::qualify_expr(left, names, bound); Self::qualify_expr(right, names, bound); }
+            Expr::Compose{left,right} | Expr::BinaryOp { left, right, .. } => { Self::qualify_expr(left, names, bound); Self::qualify_expr(right, names, bound); }
             Expr::MemberAccess { target, .. } | Expr::Specialize { target, .. } | Expr::RefCreate(target) | Expr::TailCall(target) => Self::qualify_expr(target, names, bound),
             Expr::ListLiteral(items) => for item in items { Self::qualify_expr(item, names, bound); },
             Expr::DictLiteral(items)=>for (_,v) in items{Self::qualify_expr(v,names,bound);},
@@ -166,7 +204,7 @@ impl PackageManager {
             Expr::IndirectCall{target,args}=>{Self::qualify_expr_types(target,names);for arg in args{Self::qualify_expr_types(arg,names);}},
             Expr::Specialize{target,type_args}=>{for t in type_args{Self::qualify_type(t,names);}Self::qualify_expr_types(target,names);},
             Expr::RefCreate(t)|Expr::TailCall(t)|Expr::MemberAccess{target:t,..}=>Self::qualify_expr_types(t,names),
-            Expr::BinaryOp{left,right,..}=>{Self::qualify_expr_types(left,names);Self::qualify_expr_types(right,names);},_=>{}
+            Expr::Compose{left,right}|Expr::BinaryOp{left,right,..}=>{Self::qualify_expr_types(left,names);Self::qualify_expr_types(right,names);},_=>{}
         }
     }
 
@@ -176,7 +214,7 @@ impl PackageManager {
             Statement::VarDecl{type_annot,value,..}=>{if let Some(ty)=type_annot{Self::qualify_type(ty,names);}Self::qualify_expr_types(value,names);},
             Statement::ExprStmt(e)|Statement::Spawn(e)|Statement::Throw(e)|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>Self::qualify_expr_types(e,names),
             Statement::ForLoop{collection,body,..}=>{Self::qualify_expr_types(collection,names);Self::qualify_body_types(body,names);},
-            Statement::Match{target,cases}=>{Self::qualify_expr_types(target,names);for case in cases{Self::qualify_body_types(&mut case.body,names);}},
+            Statement::Match{target,cases}=>{Self::qualify_expr_types(target,names);for case in cases{if let Some(g)=&mut case.guard{Self::qualify_expr_types(g,names);}Self::qualify_body_types(&mut case.body,names);}},
             Statement::TryCatch{try_body,catch_body,..}=>{Self::qualify_body_types(try_body,names);Self::qualify_body_types(catch_body,names);},
             _=>{}
         }}
@@ -205,7 +243,7 @@ impl PackageManager {
                 Statement::ExprStmt(e) | Statement::Spawn(e) | Statement::Throw(e) | Statement::MemorySet { value: e, .. } => Self::qualify_expr(e, names, &bound),
                 Statement::Signal { loop_name, payload } => { if let Some(full) = names.get(loop_name) { *loop_name = full.clone(); } Self::qualify_expr(payload, names, &bound); }
                 Statement::ForLoop { var_name, collection, body } => { Self::qualify_expr(collection, names, &bound); let mut local = bound.clone(); local.insert(var_name.clone()); Self::qualify_body(body, names, &local); }
-                Statement::Match { target, cases } => { Self::qualify_expr(target, names, &bound); for case in cases { Self::qualify_pattern(&mut case.pattern,names); let mut local = bound.clone(); Self::pattern_names(&case.pattern, &mut local); Self::qualify_body(&mut case.body, names, &local); } }
+                Statement::Match { target, cases } => { Self::qualify_expr(target, names, &bound); for case in cases { Self::qualify_pattern(&mut case.pattern,names); let mut local = bound.clone(); Self::pattern_names(&case.pattern, &mut local); if let Some(g)=&mut case.guard{Self::qualify_expr(g,names,&local);} Self::qualify_body(&mut case.body, names, &local); } }
                 Statement::TryCatch { try_body, error_name, catch_body } => { Self::qualify_body(try_body, names, &bound); let mut local = bound.clone(); local.insert(error_name.clone()); Self::qualify_body(catch_body, names, &local); }
                 Statement::Terminate => {}
             }
@@ -226,7 +264,7 @@ impl PackageManager {
 
         self.loading_stack.insert(pkg_name.to_string());
 
-        let source = if let Some(source)=crate::stdlib::bundled_package(pkg_name) {source.to_owned()} else {
+        let source = if let Some(source)=crate::stdlib::bundled_package(pkg_name) {source.to_owned()} else if pkg_name=="std" && self.find_package_file(pkg_name).is_err(){include_str!("../../programs/std.lia").to_owned()} else {
             let pkg_file=self.find_package_file(pkg_name)?;
             fs::read_to_string(&pkg_file).map_err(|e|SemanticError::PackageError(format!("Failed to read package file '{}': {}",pkg_file.display(),e)))?
         };
@@ -238,12 +276,30 @@ impl PackageManager {
             ))
         })?;
 
-        let raw_prog = parser.parse_program().map_err(|e| {
+        let mut raw_prog = parser.parse_program().map_err(|e| {
             SemanticError::PackageError(format!(
                 "Syntax error in package '{}': {}",
                 pkg_name, e
             ))
         })?;
+        if crate::stdlib::bundled_package(pkg_name).is_some(){
+            // Prelude binders must not collide with user types named T, E, etc.
+            for decl in &mut raw_prog.declarations{
+                let parameters=match decl{
+                    TopLevelDecl::Func(f)=>&mut f.type_params,
+                    TopLevelDecl::Type(t)=>&mut t.type_params,
+                    _=>continue
+                };
+                let rename:HashMap<String,String>=parameters.iter().map(|n|(n.clone(),format!("{}builtin_{}",char::from(0),n))).collect();
+                for parameter in parameters{*parameter=rename[parameter].clone();}
+                Self::qualify_decl_types(decl,&rename);
+            }
+        }
+        let package_base=if crate::stdlib::bundled_package(pkg_name).is_some() || pkg_name=="std"{self.base_dir.clone()}else{self.find_package_file(pkg_name)?.parent().unwrap_or(&self.base_dir).to_path_buf()};
+        if crate::stdlib::bundled_package(pkg_name).is_none(){
+            if let Ok(path)=self.find_package_file(pkg_name){crate::ffi::set_source(&mut raw_prog,&path);}
+        }
+        Self::foreign_paths(&mut raw_prog,&package_base)?;
         self.local_declarations.insert(pkg_name.to_owned(), raw_prog.declarations.iter().filter_map(Self::decl_name).map(str::to_owned).collect());
 
         // `std` is privileged because its declarations map to runtime code.

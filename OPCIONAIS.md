@@ -1,5 +1,8 @@
 # Tipos opcionais e resultados
 
+`Option[T]`, `Result[T, E]` e seus construtores são integrados à
+linguagem, como `List[T]`. Não exigem `import`.
+
 A ausência e os erros são valores discriminados e tipados. Não existe conversão
 implícita de `null`, de um valor comum para um opcional ou de um erro para uma
 exceção.
@@ -7,7 +10,6 @@ exceção.
 ## Option
 
 ```lia
-import option
 func increment(value: Option[Int]) -> Int {
     match value {
         Some(n) => n + 1,
@@ -46,7 +48,6 @@ avaliado mesmo em `Some`. Para avaliação preguiçosa, passe uma closure a
 ## Result
 
 ```lia
-import result
 func divide(a: Int, b: Int) -> Result[Int, String] {
     match b == 0 {
         True => Err("division by zero"),
@@ -88,12 +89,14 @@ seguem as regras documentadas em [ENUMS.md](ENUMS.md). Um `match` precisa cobrir
 todas as variantes, incluindo combinações de padrões aninhados. Dois tipos com
 variantes de mesmo nome exigem qualificação, como `Maybe.Some` e `Option.Some`.
 
-## Imports, cópia e análises
+## Escopo padrão, cópia e análises
 
 `option` e `result` são módulos reservados, embutidos no compilador. Não exigem
-arquivos `.lia` no diretório do programa e só ficam disponíveis por import
-explícito. Importar ambos expõe `Option` e `Result`, com seus construtores, mas
-mantém os helpers qualificados para evitar colisões como `map` e `unwrap_or`.
+arquivos `.lia` no diretório do programa. `Option`, `Result` e seus
+construtores estão integrados ao escopo padrão, como `List`, sem import.
+Os helpers `option.*` e `result.*` também estão disponíveis por padrão,
+qualificados para evitar colisões como `map` e `unwrap_or`. Imports
+explícitos antigos continuam aceitos por compatibilidade.
 Para escolher um alias de helper, use `import option.{Option, unwrap_or}`.
 Arquivos locais com esses nomes de módulo não substituem as implementações
 embutidas.
@@ -118,3 +121,8 @@ de erro nem propagação automática de `Err` nesta implementação. Use os padr
 ou os helpers tipados.
 
 Exemplo executável: [19_option_result.lia](programs/19_option_result.lia).
+
+Construtores de enums definidos pelo programa têm prioridade sobre nomes
+curtos do prelude implícito. Se um enum local define `Some`, use
+`Option.Some` para selecionar o construtor opcional explicitamente.
+Conflitos com imports explícitos continuam exigindo nomes qualificados.

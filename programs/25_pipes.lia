@@ -1,0 +1,23 @@
+import std
+const BASE = 3
+func increment(n: Int) -> Int { n + 1 }
+func double(n: Int) -> Int { n * 2 }
+func identity<T>(value: T) -> T { value }
+func make(offset: Int) -> (Int) -> Int { |n: Int| -> Int { n + offset } }
+routine Worker(transform: (Int) -> Int) { std.log("worker", 4 |> transform) }
+routine main() {
+    std.log("forward", BASE |> increment |> double)
+    std.log("backward", double <| increment <| BASE)
+    let transform = increment >>> double
+    let copy = transform
+    std.log("composition", transform(3), copy(4))
+    let alternative = identity<Int> ->> make(5) ->> double
+    std.log("alternative", 2 |> alternative)
+    let offset = 7
+    let captured = (|n: Int| -> Int { n + offset }) >>> double
+    let offset = 99
+    std.log("capture", captured(1))
+    std.log("optional", option.map(Some(2), transform))
+    match Some(2) { Some(n) if (n |> transform) > 0 => std.log("guard", n), _ => std.log(0) }
+    spawn Worker(transform)
+}

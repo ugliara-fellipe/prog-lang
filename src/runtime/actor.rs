@@ -24,6 +24,7 @@ pub struct ActorHandle {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvaluationFailure {
+    Foreign(String),
     Invalid,
     Thrown(RuntimeValue),
 }
@@ -144,6 +145,7 @@ impl RuntimeValue {
 impl std::fmt::Display for EvaluationFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Foreign(message)=>write!(formatter,"FFI: {}",message),
             Self::Invalid => write!(formatter, "invalid expression, target, or arguments"),
             Self::Thrown(value) => write!(formatter, "uncaught exception: {}", value),
         }
@@ -199,6 +201,7 @@ impl SignalRouter {
                     } else {
                         let function=self.functions.lock().expect("function registry lock poisoned").get(&name).cloned();
                         match function {
+                            Some(f) if f.foreign.is_some()=>crate::ffi::invoke(&f,&args).map(EvaluationStep::Value).map_err(EvaluationFailure::Foreign),
                             Some(f) if f.params.len()==args.len()=>{
                                 let mut scope=f.params.iter().zip(args).map(|(p,v)|(p.name.clone(),v)).collect();
                                 Self::evaluate_block_step(&f.body,&mut scope,self,true)
@@ -278,8 +281,20 @@ impl SignalRouter {
             },
             Statement::Match{target,cases}=>{
                 let value=Self::evaluate_expr(target,scope,router)?;
-                let case=cases.iter().find(|c|router.pattern_matches(&c.pattern,&value)).ok_or(EvaluationFailure::Invalid)?;
-                let mut branch=scope.clone();Self::bind_pattern(&case.pattern,&value,&mut branch);
+                let mut selected=None;
+                for case in cases{
+                    if !router.pattern_matches(&case.pattern,&value){continue;}
+                    let mut branch=scope.clone();Self::bind_pattern(&case.pattern,&value,&mut branch);
+                    if let Some(guard)=&case.guard{
+                        match Self::evaluate_expr(guard,&branch,router)?{
+                            RuntimeValue::Bool(true)=>{},
+                            RuntimeValue::Bool(false)=>continue,
+                            _=>return Err(EvaluationFailure::Invalid)
+                        }
+                    }
+                    selected=Some((case,branch));break;
+                }
+                let (case,mut branch)=selected.ok_or(EvaluationFailure::Invalid)?;
                 match Self::evaluate_block_step(&case.body,&mut branch,router,last)? {
                     EvaluationStep::Value(value)=>result=value,
                     call@EvaluationStep::Tail(_)=>return Ok(call),
@@ -347,6 +362,7 @@ impl SignalRouter {
 
     fn evaluate_expr_context(expr: &Expr, scope: &HashMap<String, RuntimeValue>, router: &SignalRouter, context: EvaluationContext<'_>) -> Result<RuntimeValue, EvaluationFailure> {
         match expr {
+            Expr::Compose{..}=>Err(EvaluationFailure::Invalid),
             Expr::ConstValue{value,..}=>RuntimeValue::constant_value(value),
             Expr::Closure{params,body,..}=>{
                 let captures=crate::semantic::closures::free_variables(params,body).into_iter().filter_map(|n|scope.get(&n).cloned().map(|v|(n,v))).collect();

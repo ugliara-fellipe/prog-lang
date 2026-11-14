@@ -38,7 +38,7 @@ pub fn validate_standard_library(program: &Program) -> Result<(), String> {
         let TopLevelDecl::Func(function) = declaration else {
             return Err("the std package may declare functions only".to_string());
         };
-        if !function.body.is_empty() {
+        if !function.body.is_empty() || function.foreign.is_some() {
             return Err(format!(
                 "standard function '{}' must be implemented by the certified runtime primitive",
                 function.name
@@ -69,7 +69,8 @@ pub fn validate_standard_library(program: &Program) -> Result<(), String> {
 }
 
 /// Bundled algebraic data types and helpers, implemented as ordinary Lia source.
-/// They are available only after an explicit import, without external files.
+/// Collections and optional types form the default prelude; JSON conversion
+/// remains explicitly imported. No external package files are required.
 pub fn bundled_package(name:&str)->Option<&'static str>{
     match name {"option"=>Some(include_str!("library/option.lia")),"result"=>Some(include_str!("library/result.lia")),"dict"=>Some(include_str!("library/dict.lia")),"json"=>Some(include_str!("library/json.lia")),_=>None}
 }
@@ -77,4 +78,13 @@ pub fn bundled_package(name:&str)->Option<&'static str>{
 /// These finite natives never invoke callbacks; dictionary operations copy values.
 pub fn is_bundled_native_function(name:&str)->bool{
     matches!(name,"dict.empty"|"dict.get"|"dict.set"|"dict.remove"|"dict.has"|"dict.keys"|"dict.values"|"dict.len"|"json.parse"|"json.parse_dict"|"json.stringify"|"json.as_dict"|"json.as_array"|"json.as_string"|"json.as_int"|"json.as_bool"|"json.is_null"|"json.null")
+}
+
+/// Closed-world prelude helpers receive function values from their call sites,
+/// rather than behaving as additional externally callable program entry points.
+pub fn is_prelude_function(name:&str)->bool{
+    matches!(name,
+        "option.is_some"|"option.is_none"|"option.unwrap_or"|"option.unwrap_or_else"|"option.map"|"option.and_then"|
+        "result.is_ok"|"result.is_err"|"result.unwrap_or"|"result.unwrap_or_else"|"result.map"|"result.map_err"|"result.and_then"|
+        "dict.empty"|"dict.get"|"dict.set"|"dict.remove"|"dict.has"|"dict.keys"|"dict.values"|"dict.len")
 }

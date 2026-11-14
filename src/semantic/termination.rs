@@ -6,10 +6,13 @@ pub struct TerminationChecker;
 
 impl TerminationChecker {
     pub fn verify_program(program: &Program) -> Result<(), SemanticError> {
+        if let Some(program)=crate::semantic::builtins::augment(program)?{return Self::verify_program(&program);}
+        if crate::semantic::pipes::needs_lowering(program){return Self::verify_program(&crate::semantic::pipes::lower_program(program)?);}
         if crate::semantic::constants::needs_lowering(program){return Self::verify_program(&crate::semantic::constants::lower_program(program)?);}
         for decl in &program.declarations {
             match decl {
                 TopLevelDecl::Func(func) => {
+                    if func.foreign.is_some(){crate::ffi::validate(func).map_err(SemanticError::InvalidExpression)?;continue;}
                     Self::verify_func_termination(func)?;
                 }
                 TopLevelDecl::Routine(routine) => {
@@ -114,6 +117,7 @@ impl TerminationChecker {
                     let related=Self::structural_origin(target,sub_components) > 0;
                     Self::remove_pattern_bindings(&case.pattern,&mut local_subs);
                     if related { Self::extract_pattern_bindings(&case.pattern, &mut local_subs); }
+                    if let Some(g)=&case.guard{Self::check_expr_termination(g,func_name,&local_subs)?;}
                     Self::check_body_termination(&case.body,func_name,&local_subs)?;
                 }
             }
@@ -175,6 +179,7 @@ impl TerminationChecker {
                 for case in cases {
                     let mut local_subs = sub_components.clone();
                     Self::extract_pattern_bindings(&case.pattern, &mut local_subs);
+                    if let Some(g)=&case.guard{Self::check_routine_expr_termination(g,routine_name,&local_subs)?;}
                     for s in &case.body {
                         Self::check_routine_stmt_termination(s, routine_name, &local_subs)?;
                     }

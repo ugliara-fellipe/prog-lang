@@ -17,7 +17,7 @@ importItemList
     ;
 
 topLevelDecl
-    : DOC_COMMENT* (constDecl | typeDecl | enumDecl | funcDecl | routineDecl | loopDecl)
+    : DOC_COMMENT* (constDecl | typeDecl | enumDecl | foreignDecl | funcDecl | routineDecl | loopDecl)
     ;
 
 constDecl
@@ -39,6 +39,11 @@ enumVariant
 
 structField
     : DOC_COMMENT* ID ':' typeSpec
+    ;
+
+foreignDecl
+    : 'extern' STRING ('fn' | 'func') ID '(' paramList? ')'
+      ('->' typeSpec)? ('from' STRING)? ('as' STRING)? ('cost' STRING)? ';'
     ;
 
 funcDecl
@@ -159,7 +164,7 @@ matchStmt
     ;
 
 matchCase
-    : pattern '=>' (block | expr)
+    : pattern ('if' expr)? '=>' (block | expr)
     ;
 
 pattern
@@ -184,6 +189,9 @@ expr
     | expr op=('*' | '/') expr                             # MulDivExpr
     | expr op=('+' | '-') expr                             # AddSubExpr
     | expr op=('==' | '!=' | '<' | '>' | '<=' | '>=') expr # RelationalExpr
+    | expr op=('>>>' | '->>') expr                         # CompositionExpr
+    | expr '|>' expr                                      # PipeForwardExpr
+    | <assoc=right> expr '<|' expr                         # PipeBackwardExpr
     ;
 
 argList
@@ -235,6 +243,7 @@ TERMINATE_KW : 'terminate' ;
 FOR_KW     : 'for' ;
 IN_KW      : 'in' ;
 MATCH_KW   : 'match' ;
+IF_KW      : 'if' ;
 REF_KW     : 'ref' ;
 MESSAGE_KW : 'message' ;
 LIST_KW    : 'List' ;

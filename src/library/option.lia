@@ -1,4 +1,4 @@
-// Bundled ordinary Lia code. Import explicitly with `import option`.
+// Built-in typed helpers, available in the default language scope.
 type Option<T> = Some(T) | None
 func is_some<T>(value: Option[T]) -> Bool {
     match value { Some(_) => True, None => False }

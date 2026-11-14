@@ -1,3 +1,6 @@
+pub mod foreign_report;
+pub mod ffi;
+pub mod repl;
 pub mod documentation;
 pub mod ast;
 pub mod parser;

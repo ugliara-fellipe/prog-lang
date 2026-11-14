@@ -32,12 +32,15 @@ enum ExecutionControl {
 }
 
 impl WorkStealingPool {
-    pub fn new(verbose: bool) -> Self {
-        let core_ids = core_affinity::get_core_ids().unwrap_or_default();
+    pub fn new(verbose: bool) -> Self {Self::with_limit(verbose,None)}
+    pub fn for_repl()->Self{Self::with_limit(false,Some(2))}
+    fn with_limit(verbose:bool,limit:Option<usize>)->Self{
+        let mut core_ids = core_affinity::get_core_ids().unwrap_or_default();
+        if let Some(limit)=limit{core_ids.truncate(limit);}
         let num_cores = if !core_ids.is_empty() {
             core_ids.len()
         } else {
-            thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+            thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(limit.unwrap_or(usize::MAX))
         };
 
         let injector = Arc::new(Injector::new());
@@ -311,11 +314,23 @@ impl WorkStealingPool {
             }
             Statement::Match { target, cases } => {
                 let target = value!(target);
-                let Some(case) = cases.iter().find(|case| signal_router.pattern_matches(&case.pattern, &target)) else { return ExecutionControl::Failure(EvaluationFailure::Invalid); };
-                let mut local_values = variable_values.clone();
-                let mut local_types = variable_types.clone();
-                SignalRouter::bind_pattern(&case.pattern, &target, &mut local_values);
-                for (name, value) in &local_values { local_types.entry(name.clone()).or_insert_with(|| value.type_name()); }
+                let mut selected=None;
+                for case in cases{
+                    if !signal_router.pattern_matches(&case.pattern,&target){continue;}
+                    let mut bindings=HashMap::new();SignalRouter::bind_pattern(&case.pattern,&target,&mut bindings);
+                    let mut local_values=variable_values.clone();let mut local_types=variable_types.clone();
+                    for (name,value) in bindings{local_types.insert(name.clone(),value.type_name());local_values.insert(name,value);}
+                    if let Some(guard)=&case.guard{
+                        match signal_router.evaluate_expression_with_context(guard,&local_values,received_signal,loop_name,&local_types){
+                            Ok(RuntimeValue::Bool(true))=>{},
+                            Ok(RuntimeValue::Bool(false))=>continue,
+                            Ok(_)=>return ExecutionControl::Failure(EvaluationFailure::Invalid),
+                            Err(error)=>return ExecutionControl::Failure(error)
+                        }
+                    }
+                    selected=Some((case,local_values,local_types));break;
+                }
+                let Some((case,mut local_values,mut local_types))=selected else{return ExecutionControl::Failure(EvaluationFailure::Invalid);};
                 for stmt in &case.body {
                     match Self::execute_statement(stmt, arena, verbose, core_id, global, pending_tasks, signal_router, received_signal, loop_name, &mut local_types, &mut local_values) {
                         ExecutionControl::Continue => {}
@@ -359,5 +374,28 @@ impl WorkStealingPool {
 impl Drop for WorkStealingPool {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
+        for worker in self._worker_threads.drain(..){let _=worker.join();}
+    }
+}
+
+impl WorkStealingPool {
+    pub fn execute_repl(&self,body:&[Statement],router:&Arc<SignalRouter>,types:&mut HashMap<String,String>,values:&mut HashMap<String,RuntimeValue>)->Result<Vec<RuntimeValue>,String>{
+        let arena=RoutineArena::new();let mut results=Vec::new();
+        for stmt in body{
+            if let Statement::ExprStmt(expr)=stmt{
+                let value=router.evaluate_expression_with_context(expr,values,None,None,types).map_err(|e|e.to_string())?;
+                if value!=RuntimeValue::None{results.push(value);}
+            }else{
+                match Self::execute_statement(stmt,&arena,false,0,&self.injector,&self.pending_tasks,router,None,None,types,values){
+                    ExecutionControl::Continue=>{},
+                    ExecutionControl::Failure(e)=>{self.shutdown();return Err(e.to_string());},
+                    ExecutionControl::Terminate=>return Err("terminate outside loop".into())
+                }
+            }
+        }
+        while !self.is_idle() && !self.is_shutdown() && !router.has_errors(){thread::sleep(std::time::Duration::from_millis(1));}
+        let errors=router.take_errors();
+        if !errors.is_empty(){self.shutdown();return Err(errors.join("; "));}
+        Ok(results)
     }
 }

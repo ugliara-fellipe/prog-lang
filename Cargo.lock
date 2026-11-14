@@ -136,6 +136,7 @@ dependencies = [
  "core_affinity",
  "crossbeam-channel",
  "crossbeam-deque",
+ "libc",
  "petgraph",
  "serde",
  "serde_json",

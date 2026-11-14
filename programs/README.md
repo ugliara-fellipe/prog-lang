@@ -34,6 +34,10 @@ This directory contains a suite of programs written in **Lia** (`.lia`), designe
 | [`21_dictionary_json.lia`](21_dictionary_json.lia) | Typed dictionaries, safe lookup, value copies, callback payloads, and JSON round trips. |
 | [`22_constants.lia`](22_constants.lia) | Compile-time constants, checked arithmetic, typed collections, lexical scope, closures, and bounded integer iteration. |
 | [`23_docstrings.lia`](23_docstrings.lia) | Structured documentation comments, documented types and variants, and Markdown API generation with the doc command. |
+| [`24_pattern_guards.lia`](24_pattern_guards.lia) | Boolean match guards with pattern bindings, optional callback values, closures, dictionary lookup, and spawn. |
+| [`25_pipes.lia`](25_pipes.lia) | Forward and backward pipes, reusable function composition, generic specialization, closures, optional callbacks, and spawn. |
+| [`26_builtin_collections.lia`](26_builtin_collections.lia) | Dictionaries, Option and Result syntax, constructors, helpers, safe lookup and spawn without collection imports. |
+| [`27_ffi.lia`](27_ffi.lia) | Typed C interoperability, symbol aliases, first-class foreign functions, pipes, and spawn. Requires the native FFI build dependencies. |
 | [`math.lia`](math.lia) and [`std.lia`](std.lia) | Libraries: they have no `main` and become available only through explicit imports. |
 
 ---

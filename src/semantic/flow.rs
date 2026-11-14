@@ -34,10 +34,13 @@ pub struct FunctionFlow {
     targets: HashMap<usize, HashSet<String>>,
     indirect: HashSet<usize>,
     calls: HashMap<String, HashSet<String>>,
+    spawns: HashMap<String, HashSet<String>>,
     indirect_calls: HashMap<String, HashSet<String>>,
 }
 impl FunctionFlow {
     pub fn analyze(program: &Program) -> Result<Self, SemanticError> {
+        for decl in &program.declarations{if let TopLevelDecl::Func(f)=decl{if f.foreign.is_some(){crate::ffi::validate(f).map_err(SemanticError::InvalidExpression)?;}}}
+        if crate::semantic::pipes::needs_lowering(program){return Err(SemanticError::InvalidExpression("lower composition before function flow analysis".into()));}
         if crate::semantic::constants::needs_lowering(program){return Err(SemanticError::ConstantError("lower constants before function flow analysis".into()));}
         crate::semantic::tail_calls::validate_program(program)?;
         let mut solver = Solver::new(program);
@@ -54,6 +57,7 @@ impl FunctionFlow {
     }
     pub fn targets_for(&self, expr: &Expr) -> HashSet<String> { self.targets.get(&(expr as *const Expr as usize)).cloned().unwrap_or_default() }
     pub fn is_indirect(&self, expr: &Expr) -> bool { self.indirect.contains(&(expr as *const Expr as usize)) }
+    pub fn spawns_by_owner(&self)->&HashMap<String,HashSet<String>>{&self.spawns}
     pub fn calls_by_owner(&self) -> &HashMap<String, HashSet<String>> { &self.calls }
     pub fn indirect_calls_by_owner(&self) -> &HashMap<String, HashSet<String>> { &self.indirect_calls }
 }
@@ -164,6 +168,7 @@ impl<'a> Solver<'a> {
     fn seed_open_parameters(&mut self) {
         for decl in &self.program.declarations {
             let (name, params, type_params) = match decl { TopLevelDecl::Func(f) => (&f.name, &f.params, &f.type_params), TopLevelDecl::Routine(r) => (&r.name, &r.params, &r.type_params), _ => continue };
+            if crate::stdlib::is_prelude_function(name){continue;}
             for (index,param) in params.iter().enumerate() {
                 let existing = &self.params[name][index];
                 if existing.targets.is_empty() && existing.contents.is_empty() && !existing.unknown {
@@ -259,6 +264,7 @@ impl<'a> Solver<'a> {
                 for value in &values {result.contents.extend(value.targets.iter().cloned());result.contents.extend(value.contents.iter().cloned());result.contents_unknown |= value.unknown || value.contents_unknown;}
                 continue;
             }
+            if spawn{self.changed |= self.flow.spawns.entry(owner.to_owned()).or_default().insert(name.clone());}
             if !spawn {
                 self.changed |= self.flow.calls.entry(owner.to_owned()).or_default().insert(name.clone());
                 if indirect { self.changed |= self.flow.indirect_calls.entry(owner.to_owned()).or_default().insert(name.clone()); }
@@ -299,10 +305,11 @@ impl<'a> Solver<'a> {
                 Statement::ExprStmt(expr) => self.expr(owner,expr,scope,false),
                 Statement::Spawn(expr) => { self.expr(owner,expr,scope,true); Value::default() }
                 Statement::Throw(expr) => { let value=self.expr(owner,expr,scope,false); self.changed |= self.raised.entry(owner.to_owned()).or_default().merge(&value); Value::default() }
-                Statement::MemorySet {value:expr,..} | Statement::Signal {payload:expr,..} => { self.expr(owner,expr,scope,false); Value::default() }
+                Statement::Signal{loop_name,payload}=>{self.changed |= self.flow.spawns.entry(owner.to_owned()).or_default().insert(loop_name.clone());self.expr(owner,payload,scope,false);Value::default()}
+                Statement::MemorySet {value:expr,..} => { self.expr(owner,expr,scope,false); Value::default() }
                 Statement::Match { target,cases } => {
                     let target = self.expr(owner,target,scope,false); let mut value = Value::default();
-                    for case in cases { let mut local=scope.clone(); Self::bind(&case.pattern,&target,&mut local); value.merge(&self.body(owner,&case.body,&mut local)); }
+                    for case in cases { let mut local=scope.clone(); Self::bind(&case.pattern,&target,&mut local); if let Some(g)=&case.guard{self.expr(owner,g,&local,false);} value.merge(&self.body(owner,&case.body,&mut local)); }
                     value
                 }
                 Statement::ForLoop {var_name,collection,body} => { let collection=self.expr(owner,collection,scope,false); let mut local=scope.clone(); local.insert(var_name.clone(),collection.element()); self.body(owner,body,&mut local); Value::default() }

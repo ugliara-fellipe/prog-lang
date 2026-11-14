@@ -1,0 +1,18 @@
+import std
+
+func lookup(values: Dict[Int], key: String) -> Option[Int] { values[key] }
+func checked(value: Option[Int]) -> Result[Int, String] {
+    match value { Some(n) => Ok(n), None => Err("missing") }
+}
+routine Worker(values: Dict[Int]) {
+    std.log("worker", option.unwrap_or(values["count"], 0))
+}
+routine main() {
+    let values: Dict[Int] = {count: 3}
+    let copy = dict.set(values, "count", 8)
+    let missing: Option[Int] = None
+    std.log("lookup", lookup(values, "count"), copy["absent"])
+    std.log("result", checked(copy["count"]), checked(missing))
+    std.log("copy", option.unwrap_or(values["count"], 0), dict.len(copy))
+    spawn Worker(copy)
+}

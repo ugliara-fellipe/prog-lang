@@ -1,0 +1,13 @@
+import std
+
+/// Calls the process C runtime. Lia Int uses a signed 64-bit C value.
+extern "C" fn absolute(value: Int) -> Int as "llabs" cost "O(1)";
+
+routine Worker(transform: (Int) -> Int) {
+    std.log("worker", transform(0 - 4))
+}
+routine main() {
+    let copy = absolute
+    std.log("native", absolute(0 - 7), 0 - 3 |> copy)
+    spawn Worker(copy)
+}

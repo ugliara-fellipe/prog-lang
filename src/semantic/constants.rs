@@ -155,7 +155,7 @@ impl Evaluator{
             Expr::Closure{params,body,..}=>{let mut local=scope.clone();for p in params{local.insert(p.name.clone(),None);}self.body(body,&local)?;},
             Expr::ListLiteral(items)=>for e in items{self.expression(e,scope)?;},
             Expr::DictLiteral(items)=>for (_,e) in items{self.expression(e,scope)?;},
-            Expr::BinaryOp{left,right,..}|Expr::Index{target:left,key:right}=>{self.expression(left,scope)?;self.expression(right,scope)?;},
+            Expr::Compose{left,right}|Expr::BinaryOp{left,right,..}|Expr::Index{target:left,key:right}=>{self.expression(left,scope)?;self.expression(right,scope)?;},
             Expr::IndirectCall{target,args}=>{self.expression(target,scope)?;for e in args{self.expression(e,scope)?;}},
             Expr::FunctionCall{name,args}=>{
                 for e in args.iter_mut(){self.expression(e,scope)?;}
@@ -182,7 +182,7 @@ impl Evaluator{
                 Statement::VarDecl{name,value,..}=>{self.expression(value,&scope)?;scope.insert(name.clone(),None);},
                 Statement::ExprStmt(e)|Statement::Spawn(e)|Statement::Throw(e)|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>self.expression(e,&scope)?,
                 Statement::ForLoop{var_name,collection,body}=>{self.expression(collection,&scope)?;let mut local=scope.clone();local.insert(var_name.clone(),None);self.body(body,&local)?;},
-                Statement::Match{target,cases}=>{self.expression(target,&scope)?;for case in cases{let mut local=scope.clone();pattern_scope(&case.pattern,&mut local);self.body(&mut case.body,&local)?;}},
+                Statement::Match{target,cases}=>{self.expression(target,&scope)?;for case in cases{let mut local=scope.clone();pattern_scope(&case.pattern,&mut local);if let Some(g)=&mut case.guard{self.expression(g,&local)?;}self.body(&mut case.body,&local)?;}},
                 Statement::TryCatch{try_body,error_name,catch_body}=>{self.body(try_body,&scope)?;let mut local=scope.clone();local.insert(error_name.clone(),None);self.body(catch_body,&local)?;},
                 Statement::Terminate=>{}
             }
@@ -227,14 +227,14 @@ pub fn needs_lowering(program:&Program)->bool{
         Expr::ListLiteral(v)=>v.iter().any(expr),Expr::DictLiteral(v)=>v.iter().any(|(_,e)|expr(e)),
         Expr::FunctionCall{args,..}=>args.iter().any(expr),
         Expr::IndirectCall{target,args}=>expr(target)||args.iter().any(expr),
-        Expr::Index{target,key}|Expr::BinaryOp{left:target,right:key,..}=>expr(target)||expr(key),
+        Expr::Compose{left:target,right:key}|Expr::Index{target,key}|Expr::BinaryOp{left:target,right:key,..}=>expr(target)||expr(key),
         Expr::RefCreate(t)|Expr::TailCall(t)|Expr::MemberAccess{target:t,..}|Expr::Specialize{target:t,..}=>expr(t),
         _=>false
     }}
     fn body_has(body:&[Statement])->bool{body.iter().any(|s|match s{
         Statement::Const(_)=>true,
         Statement::ForLoop{collection,body,..}=>expr(collection)||body_has(body),
-        Statement::Match{target,cases}=>expr(target)||cases.iter().any(|c|body_has(&c.body)),
+        Statement::Match{target,cases}=>expr(target)||cases.iter().any(|c|c.guard.as_ref().is_some_and(expr)||body_has(&c.body)),
         Statement::TryCatch{try_body,catch_body,..}=>body_has(try_body)||body_has(catch_body),
         Statement::VarDecl{value:e,..}|Statement::ExprStmt(e)|Statement::Spawn(e)|Statement::Throw(e)|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>expr(e),
         _=>false

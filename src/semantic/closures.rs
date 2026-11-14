@@ -20,7 +20,7 @@ fn free_expr(expr:&Expr,bound:&HashSet<String>,free:&mut HashSet<String>){
         Expr::FunctionCall{name,args}=>{read(name);for arg in args{free_expr(arg,bound,free);}},
         Expr::IndirectCall{target,args}=>{free_expr(target,bound,free);for arg in args{free_expr(arg,bound,free);}},
         Expr::Closure{params,body,..}=>{let mut local=bound.clone();local.extend(params.iter().map(|p|p.name.clone()));free_body(body,&local,free);},
-        Expr::BinaryOp{left,right,..}=>{free_expr(left,bound,free);free_expr(right,bound,free);},
+        Expr::Compose{left,right}|Expr::BinaryOp{left,right,..}=>{free_expr(left,bound,free);free_expr(right,bound,free);},
         Expr::RefCreate(t)|Expr::TailCall(t)|Expr::MemberAccess{target:t,..}|Expr::Specialize{target:t,..}=>free_expr(t,bound,free),
         Expr::ListLiteral(items)=>for item in items{free_expr(item,bound,free);},
         Expr::DictLiteral(items)=>for (_,v) in items{free_expr(v,bound,free);},
@@ -35,7 +35,7 @@ fn free_body(body:&[Statement],outer:&HashSet<String>,free:&mut HashSet<String>)
         Statement::VarDecl{name,value,..}=>{free_expr(value,&bound,free);bound.insert(name.clone());},
         Statement::ExprStmt(e)|Statement::Spawn(e)|Statement::Throw(e)|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>free_expr(e,&bound,free),
         Statement::ForLoop{var_name,collection,body}=>{free_expr(collection,&bound,free);let mut local=bound.clone();local.insert(var_name.clone());free_body(body,&local,free);},
-        Statement::Match{target,cases}=>{free_expr(target,&bound,free);for case in cases{let mut local=bound.clone();bind_pattern(&case.pattern,&mut local);free_body(&case.body,&local,free);}},
+        Statement::Match{target,cases}=>{free_expr(target,&bound,free);for case in cases{let mut local=bound.clone();bind_pattern(&case.pattern,&mut local);if let Some(g)=&case.guard{free_expr(g,&local,free);}free_body(&case.body,&local,free);}},
         Statement::TryCatch{try_body,error_name,catch_body}=>{free_body(try_body,&bound,free);let mut local=bound.clone();local.insert(error_name.clone());free_body(catch_body,&local,free);},
         Statement::Terminate=>{}
     }}
@@ -52,7 +52,7 @@ pub fn collect_expr<'a>(expr:&'a Expr,found:&mut Vec<&'a Expr>){
         Expr::DictLiteral(items)=>for (_,v) in items{collect_expr(v,found);},
         Expr::Index{target,key}=>{collect_expr(target,found);collect_expr(key,found);},
         Expr::IndirectCall{target,args}=>{collect_expr(target,found);for arg in args{collect_expr(arg,found);}},
-        Expr::BinaryOp{left,right,..}=>{collect_expr(left,found);collect_expr(right,found);},
+        Expr::Compose{left,right}|Expr::BinaryOp{left,right,..}=>{collect_expr(left,found);collect_expr(right,found);},
         Expr::RefCreate(t)|Expr::TailCall(t)|Expr::Specialize{target:t,..}|Expr::MemberAccess{target:t,..}=>collect_expr(t,found),_=>{}
     }
 }
@@ -61,7 +61,7 @@ fn collect_body<'a>(body:&'a [Statement],found:&mut Vec<&'a Expr>){
         Statement::Const(c)=>collect_expr(&c.value,found),
         Statement::ExprStmt(e)|Statement::Spawn(e)|Statement::Throw(e)|Statement::VarDecl{value:e,..}|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>collect_expr(e,found),
         Statement::ForLoop{collection,body,..}=>{collect_expr(collection,found);collect_body(body,found);},
-        Statement::Match{target,cases}=>{collect_expr(target,found);for case in cases{collect_body(&case.body,found);}},
+        Statement::Match{target,cases}=>{collect_expr(target,found);for case in cases{if let Some(g)=&case.guard{collect_expr(g,found);}collect_body(&case.body,found);}},
         Statement::TryCatch{try_body,catch_body,..}=>{collect_body(try_body,found);collect_body(catch_body,found);},Statement::Terminate=>{}
     }}
 }

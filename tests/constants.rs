@@ -144,7 +144,7 @@ fn imported_constants_and_factories_keep_package_identity(){
 fn precomputed_artifacts_cannot_hide_calls_or_fake_types(){
     let ty=TypeSpec::Primitive("Int".into());
     for value in [Expr::FunctionCall{name:"danger".into(),args:vec![]},Expr::Variable("runtime".into()),Expr::StringLiteral("bad".into())]{
-        let p=Program{imports:vec![],declarations:vec![TopLevelDecl::Func(FuncDecl{documentation:String::new(),name:"f".into(),type_params:vec![],params:vec![],return_type:Some(ty.clone()),body:vec![Statement::ExprStmt(Expr::ConstValue{value:Box::new(value),value_type:ty.clone()})]})]};
+        let p=Program{imports:vec![],declarations:vec![TopLevelDecl::Func(FuncDecl{foreign:None,documentation:String::new(),name:"f".into(),type_params:vec![],params:vec![],return_type:Some(ty.clone()),body:vec![Statement::ExprStmt(Expr::ConstValue{value:Box::new(value),value_type:ty.clone()})]})]};
         assert!(TypeChecker::new().check_program(&p).is_err());
         assert!(CallGraphValidator::new().build_and_validate(&p).is_err());
         assert!(TerminationChecker::verify_program(&p).is_err());

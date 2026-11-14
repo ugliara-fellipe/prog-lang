@@ -19,10 +19,11 @@ fn sum_declarations_support_generic_and_compact_syntax(){
     for s in ["type Maybe<T> =", "type Maybe<T> = Some(T) |", "type Bad = Same | Same", "type Bad = lower"]{assert!(Parser::new(s).unwrap().parse_program().is_err(),"{s}");}
 }
 #[test]
-fn builtin_packages_are_explicit_and_need_no_source_files(){
+fn builtin_types_need_no_import_or_source_files(){
     let p=PackageManager::new("/tmp/lia-no-package-files-required").resolve_program(parse("import option import result")).unwrap();
     TypeChecker::new().check_program(&p).unwrap();CallGraphValidator::new().build_and_validate(&p).unwrap();
-    for source in ["routine main(){let x:Option[Int]=None}","routine main(){Some(1)}","routine main(){let x=null}"]{assert!(!valid(source),"{source}");}
+    for source in ["routine main(){let x:Option[Int]=None}","routine main(){Some(1)}"]{assert!(valid(source),"{source}");}
+    assert!(!valid("routine main(){let x=null}"));
 }
 #[test]
 fn source_and_artifact_execute_optional_values_and_results(){

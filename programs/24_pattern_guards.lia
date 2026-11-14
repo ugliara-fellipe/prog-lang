@@ -1,0 +1,42 @@
+import std
+
+const LIMIT = 2
+
+/// Classifica um opcional com condições sobre o valor associado.
+func classify(value: Option[Int]) -> String {
+    match value {
+        Some(n) if n > 0 => "positive",
+        Some(n) if n == 0 => "zero",
+        Some(_) => "negative",
+        None => "missing"
+    }
+}
+func choose(value: Option[(Int) -> Bool], n: Int) -> String {
+    match value {
+        Some(test) if test(n) => "accepted",
+        Some(_) => "rejected",
+        None => "missing"
+    }
+}
+func keep(value: Int) -> Bool { value > LIMIT }
+routine Worker(value: Option[Int]) {
+    match value {
+        Some(n) if n > LIMIT => std.log("worker", n),
+        _ => std.log("worker fallback")
+    }
+}
+routine main() {
+    std.log(classify(Some(4)), classify(Some(0)), classify(Some(0 - 1)), classify(None<Int>))
+    std.log(choose(Some(keep), 3), choose(Some(keep), 1))
+    let offset = LIMIT
+    let select = |value: Option[Int]| -> Int {
+        match value { Some(n) if n > offset => n, _ => 0 }
+    }
+    std.log("closure", select(Some(5)), select(Some(1)))
+    let data = {score: 7}
+    match data["score"] {
+        Some(n) if n > LIMIT => std.log("dictionary", n),
+        _ => std.log("dictionary fallback")
+    }
+    spawn Worker(Some(4))
+}

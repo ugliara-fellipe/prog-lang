@@ -45,6 +45,8 @@ pub enum Pattern {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expr {
+    /// Forward composition, lowered to typed value-capturing closures.
+    Compose { left: Box<Expr>, right: Box<Expr> },
     /// Typed, already evaluated compile-time data.
     ConstValue { value: Box<Expr>, value_type: TypeSpec },
     Closure { params: Vec<Param>, return_type: TypeSpec, body: Vec<Statement> },
@@ -75,6 +77,8 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MatchCase {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard: Option<Expr>,
     pub pattern: Pattern,
     pub body: Vec<Statement>,
 }
@@ -118,6 +122,8 @@ pub enum Statement {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FuncDecl {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreign: Option<ForeignDecl>,
     /// Markdown from the preceding `///` comment block.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub documentation: String,
@@ -212,4 +218,17 @@ pub struct ConstDecl {
     pub name: String,
     pub type_annot: Option<TypeSpec>,
     pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ForeignDecl {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    pub abi: String,
+    pub symbol: String,
+    pub library: Option<String>,
 }

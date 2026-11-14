@@ -62,6 +62,7 @@ impl TypeChecker {
 
     /// Entry point for the whole program.
     pub fn check_program(&mut self, program: &Program) -> Result<(), SemanticError> {
+        if let Some(program)=crate::semantic::builtins::augment(program)?{return self.check_program(&program);}
         if crate::semantic::constants::needs_lowering(program){return self.check_program(&crate::semantic::constants::lower_program(program)?);}
         crate::semantic::tail_calls::validate_program(program)?;
         self.symbol_table.clear();
@@ -80,6 +81,7 @@ impl TypeChecker {
                 }
             }
             if let TopLevelDecl::Func(func) = decl {
+                if self.functions.get(&func.name).is_some_and(|old|old.foreign.is_some()||func.foreign.is_some()){return Err(SemanticError::InvalidExpression(format!("duplicate foreign name {}",func.name)));}
                 self.functions.insert(func.name.clone(), func.clone());
             }
             if let TopLevelDecl::Routine(routine) = decl {
@@ -112,6 +114,7 @@ impl TypeChecker {
 
     /// Check a function declaration and store its signature.
     fn check_func(&mut self, func: &FuncDecl) -> Result<(), SemanticError> {
+        if func.foreign.is_some(){crate::ffi::validate(func).map_err(SemanticError::InvalidExpression)?;}
         self.bind_type_parameters(&func.type_params)?;
         for param in &func.params { self.validate_type(&param.param_type)?; }
         if let Some(result)=&func.return_type { self.validate_type(result)?; }
@@ -119,7 +122,7 @@ impl TypeChecker {
         let saved = self.symbol_table.clone();
         self.symbol_table.clear();
         for param in &func.params { self.symbol_table.insert(param.name.clone(), param.param_type.clone()); }
-        let intrinsic = func.body.is_empty() && (crate::stdlib::is_bundled_native_function(&func.name) || crate::stdlib::is_total_standard_function(&func.name)
+        let intrinsic = func.body.is_empty() && (func.foreign.is_some() || crate::stdlib::is_bundled_native_function(&func.name) || crate::stdlib::is_total_standard_function(&func.name)
             || (self.standard_signatures && crate::stdlib::is_total_standard_function(&format!("std.{}", func.name))));
         let check = self.check_function_value_body(&func.body, if intrinsic { None } else { func.return_type.as_ref() });
         self.symbol_table = saved;
@@ -218,8 +221,17 @@ impl TypeChecker {
             })
         } else {self.exhaustive_matrix(&rows.iter().filter(|r|wild(&r[0])).map(|r|r[1..].to_vec()).collect::<Vec<_>>(),&types[1..])}
     }
+    fn check_guard(&self,guard:Option<&Expr>)->Result<(),SemanticError>{
+        if let Some(guard)=guard{
+            let boolean=TypeSpec::Primitive("Bool".into());
+            let actual=self.check_expr(guard,Some(&boolean))?;
+            if actual!=boolean{return Err(SemanticError::InvalidPatternGuard(actual));}
+        }
+        Ok(())
+    }
+
     fn exhaustive(&self, cases:&[MatchCase], ty:&TypeSpec)->bool {
-        self.exhaustive_matrix(&cases.iter().map(|c|vec![c.pattern.clone()]).collect::<Vec<_>>(),&[ty.clone()])
+        self.exhaustive_matrix(&cases.iter().filter(|c|c.guard.is_none()).map(|c|vec![c.pattern.clone()]).collect::<Vec<_>>(),&[ty.clone()])
     }
 
     fn copyable(&self, ty: &TypeSpec, seen: &mut HashSet<String>) -> bool {
@@ -359,6 +371,8 @@ impl TypeChecker {
 
     fn check_call(&self, signature: &TypeSpec, parameters: &[String], explicit: Option<&[TypeSpec]>, args: &[Expr], expected: Option<&TypeSpec>) -> Result<TypeSpec,SemanticError> {
         if let Some(types)=explicit {for ty in types {self.validate_type(ty)?;}}
+        let normalized=explicit.map(|types|types.iter().map(|ty|self.constructors.normalize(ty)).collect::<Vec<_>>());
+        let explicit=normalized.as_deref();
         let signature=if parameters.is_empty() {
             if explicit.is_some() { return Err(SemanticError::GenericTypeError("function has no type parameters".into())); }
             signature.clone()
@@ -408,6 +422,15 @@ impl TypeChecker {
             }
         }
         match expr {
+            Expr::Compose{left,right}=>{
+                let a=self.check_expr(left,None)?;let b=self.check_expr(right,None)?;
+                let (TypeSpec::Function(inputs,middle),TypeSpec::Function(next,result))=(&a,&b) else{return Err(SemanticError::InvalidExpression("composition requires two unary functions".into()));};
+                if inputs.len()!=1 || next.len()!=1 || Self::contains_unknown_type(&a) || Self::contains_unknown_type(&b) || self.constructors.normalize(middle)!=self.constructors.normalize(&next[0]){
+                    return Err(SemanticError::InvalidExpression(format!("incompatible composition: {:?} >>> {:?}",a,b)));
+                }
+                if !self.expression_copyable(left)||!self.expression_copyable(right){return Err(SemanticError::UncopyableCapture("composition".into()));}
+                return Ok(TypeSpec::Function(inputs.clone(),result.clone()));
+            },
             Expr::ConstValue{value,value_type}=>{crate::semantic::constants::validate_value(value,value_type)?;return Ok(value_type.clone());},
             Expr::Closure {params,return_type,body} => return self.check_closure(params,return_type,body),
             Expr::TailCall(call)=>return self.check_expr(call,expected),
@@ -581,7 +604,7 @@ impl TypeChecker {
                         self.symbol_table = scope.clone();
                         Self::validate_pattern_bindings(&case.pattern,&mut HashSet::new())?;
                         self.bind_pattern_types(&case.pattern, &target_type)?;
-                        let result = self.check_function_value_body(&case.body, tail_type);
+                        let result = self.check_guard(case.guard.as_ref()).and_then(|_|self.check_function_value_body(&case.body, tail_type));
                         self.symbol_table = scope.clone();
                         result?;
                     }
@@ -619,7 +642,7 @@ impl TypeChecker {
                         self.symbol_table = scope.clone();
                         Self::validate_pattern_bindings(&case.pattern,&mut HashSet::new())?;
                         self.bind_pattern_types(&case.pattern, &target_type)?;
-                        let result = self.check_function_value_body(&case.body, Some(expected));
+                        let result = self.check_guard(case.guard.as_ref()).and_then(|_|self.check_function_value_body(&case.body, Some(expected)));
                         if let Err(error) = result {
                             self.symbol_table = scope;
                             return Err(error);
@@ -664,7 +687,7 @@ impl TypeChecker {
                 Statement::Match { target, cases } => {
                     Self::reject_receive(target)?;
                     Self::reject_memory(target)?;
-                    for case in cases { Self::validate_non_loop_body(&case.body)?; }
+                    for case in cases { if let Some(g)=&case.guard{Self::reject_receive(g)?;Self::reject_memory(g)?;} Self::validate_non_loop_body(&case.body)?; }
                 }
                 Statement::TryCatch { try_body, catch_body, .. } => {
                     Self::validate_non_loop_body(try_body)?;
@@ -694,7 +717,7 @@ impl TypeChecker {
                 for item in items { Self::reject_receive(item)?; }
                 Ok(())
             }
-            Expr::BinaryOp { left, right, .. } => {
+            Expr::Compose{left,right} | Expr::BinaryOp { left, right, .. } => {
                 Self::reject_receive(left)?;
                 Self::reject_receive(right)
             }
@@ -715,7 +738,7 @@ impl TypeChecker {
                 for arg in args { Self::reject_memory(arg)?; }
                 Ok(())
             }
-            Expr::BinaryOp { left, right, .. } => { Self::reject_memory(left)?; Self::reject_memory(right) }
+            Expr::Compose{left,right} | Expr::BinaryOp { left, right, .. } => { Self::reject_memory(left)?; Self::reject_memory(right) }
             Expr::MemberAccess { target, .. } | Expr::RefCreate(target) | Expr::TailCall(target) | Expr::Specialize { target, .. } => Self::reject_memory(target),
             Expr::ListLiteral(items) => { for item in items { Self::reject_memory(item)?; } Ok(()) }
             _ => Ok(()),
@@ -828,7 +851,7 @@ impl TypeChecker {
                         expression_is_imported(argument, functions)?;
                     }
                 }
-                Expr::BinaryOp { left, right, .. } => {
+                Expr::Compose{left,right} | Expr::BinaryOp { left, right, .. } => {
                     expression_is_imported(left, functions)?;
                     expression_is_imported(right, functions)?;
                 }
@@ -875,6 +898,7 @@ impl TypeChecker {
             Statement::Match { target, cases } => {
                 expression_is_imported(target, functions)?;
                 for case in cases {
+                    if let Some(g)=&case.guard{expression_is_imported(g,functions)?;}
                     for statement in &case.body {
                         Self::validate_standard_library_calls(statement, functions)?;
                     }
@@ -898,6 +922,7 @@ impl TypeChecker {
     }
     fn infer_type_inner(&self, expr: &Expr) -> TypeSpec {
         match expr {
+            Expr::Compose{..}=>self.check_expr(expr,None).unwrap_or(TypeSpec::Primitive("Unknown".into())),
             Expr::ConstValue{value_type,..}=>value_type.clone(),
             Expr::DictLiteral(_) | Expr::Index{..} => self.check_expr(expr,None).unwrap_or(TypeSpec::Primitive("Unknown".into())),
             Expr::IntLiteral(_) => TypeSpec::Primitive("Int".to_string()),
@@ -982,5 +1007,81 @@ impl TypeChecker {
 
     fn qualified_name_shadowed(&self, name: &str) -> bool {
         name.split_once('.').is_some_and(|(root, _)| self.symbol_table.contains_key(root))
+    }
+}
+
+// Elaborate composition while lexical types and generic binders are available.
+// Generated identifiers contain NUL, which source identifiers cannot contain.
+impl TypeChecker {
+    pub(crate) fn lower_compositions(&mut self,mut program:Program)->Result<Program,SemanticError>{
+        for decl in &mut program.declarations{
+            self.symbol_table.clear();self.type_variables.clear();
+            match decl{
+                TopLevelDecl::Func(f)=>{self.bind_type_parameters(&f.type_params)?;for p in &f.params{self.symbol_table.insert(p.name.clone(),p.param_type.clone());}self.lower_pipe_body(&mut f.body)?;},
+                TopLevelDecl::Routine(r)=>{self.bind_type_parameters(&r.type_params)?;for p in &r.params{self.symbol_table.insert(p.name.clone(),p.param_type.clone());}self.lower_pipe_body(&mut r.body)?;},
+                TopLevelDecl::Loop(l)=>self.lower_pipe_body(&mut l.body)?,
+                _=>{}
+            }
+        }
+        Ok(program)
+    }
+    fn lower_pipe_expr(&mut self,expr:&mut Expr)->Result<(),SemanticError>{
+        match expr{
+            Expr::Compose{left,right}=>{
+                self.lower_pipe_expr(left)?;self.lower_pipe_expr(right)?;
+                let a=self.check_expr(left,None)?;let b=self.check_expr(right,None)?;
+                let TypeSpec::Function(inputs,result)=self.check_expr(expr,None)? else{unreachable!()};
+                let input=inputs[0].clone();let output=*result;
+                let first="\0pipe_first".to_string();let second="\0pipe_second".to_string();let arg="\0pipe_argument".to_string();
+                let call=Expr::IndirectCall{target:Box::new(Expr::Variable(second.clone())),args:vec![Expr::IndirectCall{target:Box::new(Expr::Variable(first.clone())),args:vec![Expr::Variable(arg.clone())]}]};
+                let closure=Expr::Closure{params:vec![Param{name:arg,param_type:input.clone()}],return_type:output.clone(),body:vec![Statement::ExprStmt(call)]};
+                let factory=Expr::Closure{params:vec![Param{name:first,param_type:a},Param{name:second,param_type:b}],return_type:TypeSpec::Function(vec![input],Box::new(output)),body:vec![Statement::ExprStmt(closure)]};
+                let Expr::Compose{left,right}=std::mem::replace(expr,Expr::IntLiteral(0)) else{unreachable!()};
+                *expr=Expr::IndirectCall{target:Box::new(factory),args:vec![*left,*right]};
+            },
+            Expr::Closure{params,body,..}=>{
+                let saved=self.symbol_table.clone();for p in params{self.symbol_table.insert(p.name.clone(),p.param_type.clone());}
+                let result=self.lower_pipe_body(body);self.symbol_table=saved;result?;
+            },
+            Expr::FunctionCall{args,..}|Expr::ListLiteral(args)=>for e in args{self.lower_pipe_expr(e)?;},
+            Expr::DictLiteral(items)=>for (_,e) in items{self.lower_pipe_expr(e)?;},
+            Expr::IndirectCall{target,args}=>{self.lower_pipe_expr(target)?;for e in args{self.lower_pipe_expr(e)?;}},
+            Expr::BinaryOp{left,right,..}|Expr::Index{target:left,key:right}=>{self.lower_pipe_expr(left)?;self.lower_pipe_expr(right)?;},
+            Expr::RefCreate(t)|Expr::TailCall(t)|Expr::MemberAccess{target:t,..}|Expr::Specialize{target:t,..}=>self.lower_pipe_expr(t)?,
+            _=>{}
+        }
+        Ok(())
+    }
+    fn lower_pipe_body(&mut self,body:&mut [Statement])->Result<(),SemanticError>{
+        for stmt in body{
+            match stmt{
+                Statement::VarDecl{name,type_annot,value,..}=>{self.lower_pipe_expr(value)?;let ty=match type_annot{Some(t)=>t.clone(),None=>self.check_expr(value,None)?};self.symbol_table.insert(name.clone(),ty);},
+                Statement::ExprStmt(e)|Statement::Spawn(e)|Statement::Throw(e)|Statement::MemorySet{value:e,..}|Statement::Signal{payload:e,..}=>self.lower_pipe_expr(e)?,
+                Statement::ForLoop{var_name,collection,body}=>{
+                    self.lower_pipe_expr(collection)?;let saved=self.symbol_table.clone();
+                    let ty=match self.infer_type(collection){TypeSpec::Generic(n,a) if n=="List"=>a[0].clone(),TypeSpec::Generic(n,_) if n=="Dict"=>TypeSpec::Primitive("String".into()),_=>TypeSpec::Primitive("Int".into())};
+                    self.symbol_table.insert(var_name.clone(),ty);self.lower_pipe_body(body)?;self.symbol_table=saved;
+                },
+                Statement::Match{target,cases}=>{
+                    self.lower_pipe_expr(target)?;let ty=self.infer_type(target);let saved=self.symbol_table.clone();
+                    for c in cases{self.symbol_table=saved.clone();self.bind_pattern_types(&c.pattern,&ty)?;if let Some(g)=&mut c.guard{self.lower_pipe_expr(g)?;}self.lower_pipe_body(&mut c.body)?;}
+                    self.symbol_table=saved;
+                },
+                Statement::TryCatch{try_body,error_name,catch_body}=>{
+                    let saved=self.symbol_table.clone();self.lower_pipe_body(try_body)?;self.symbol_table=saved.clone();self.symbol_table.insert(error_name.clone(),TypeSpec::Primitive("Unknown".into()));self.lower_pipe_body(catch_body)?;self.symbol_table=saved;
+                },
+                _=>{}
+            }
+        }
+        Ok(())
+    }
+}
+
+impl TypeChecker {
+    pub fn repl_binding_types(&self,persist:bool)->Result<HashMap<String,TypeSpec>,SemanticError>{
+        for (name,ty) in &self.symbol_table{
+            if persist && !self.copyable(ty,&mut HashSet::new()){return Err(SemanticError::UncopyableCapture(format!("REPL binding {}: {:?}",name,ty)));}
+        }
+        Ok(self.symbol_table.clone())
     }
 }

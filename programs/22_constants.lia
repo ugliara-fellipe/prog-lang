@@ -1,5 +1,4 @@
 import std
-import dict
 
 const MAX_ITER: Int = BASE * 2
 const BASE = 2

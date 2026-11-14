@@ -4,6 +4,8 @@ This is the reference implementation in **Rust** of the compiler and runtime for
 
 ---
 
+Termination guarantees cover Lia code. External C implementations form an explicit trust boundary: termination is assumed by programmer contract, and optional cost annotations supply trusted complexity bounds.
+
 ## 🚀 Project Architecture
 
 The project is structured into modular layers:
@@ -369,8 +371,8 @@ qualified constructors, and copied actor arguments are supported. See
 
 ### Optional values and results
 
-Use `import option` for `Option[T]` (`Some` / `None`) and `import result` for
-`Result[T, E]` (`Ok` / `Err`). Helpers such as `option.map`, `option.unwrap_or`,
+`Option[T]` (`Some` / `None`) and `Result[T, E]` (`Ok` / `Err`)
+are built into the default scope, with no imports required. Helpers such as `option.map`, `option.unwrap_or`,
 and `result.and_then` are ordinary typed Lia functions bundled with the compiler.
 Custom sum definitions use `type Maybe<T> = Some(T) | None`.
 See [OPCIONAIS.md](OPCIONAIS.md) and [19_option_result.lia](programs/19_option_result.lia).
@@ -378,7 +380,7 @@ See [OPCIONAIS.md](OPCIONAIS.md) and [19_option_result.lia](programs/19_option_r
 ### Dictionaries and JSON
 
 Use `Dict[T]` for String keys and typed values: `let d: Dict[Int] = {count: 3}`.
-With `import dict`, `d["count"]` returns `Option[Int]`, and
+`d["count"]` returns `Option[Int]` without an import, and
 `dict.set(d, "count", 8)` returns an independent updated value.
 Use `Dict[Json]` for heterogeneous JSON data and `import json` for
 `json.parse_dict(text)` / `json.stringify(data)`, returning `Result`.
@@ -401,3 +403,39 @@ and enum variants. Comment blocks preserve Markdown paragraphs and code examples
 `lia doc file.lia` prints the API as Markdown; `lia doc file.lia -o api.md`
 writes a file after semantic validation, without running the program.
 See [DOCSTRINGS.md](DOCSTRINGS.md) and the [generated example](docs/docstrings-api.md).
+
+### Pattern guards
+
+Match arms support boolean conditions: `Some(n) if n > 0 => n`.
+The guard runs after its pattern matches and can use the pattern bindings.
+A false guard continues to the next arm; evaluation failures propagate.
+Guarded arms require exhaustive coverage from arms without guards.
+See [GUARDS.md](GUARDS.md) and [24_pattern_guards.lia](programs/24_pattern_guards.lia).
+
+### Pipe operators
+
+Use `value |> transform |> serialize` for forward application, or
+`serialize <| transform <| value` for backward application.
+`transform >>> serialize` and `transform ->> serialize` create reusable
+unary function compositions, with checked intermediate types and value copies.
+See [PIPES.md](PIPES.md) and [25_pipes.lia](programs/25_pipes.lia).
+
+### Interactive REPL
+
+Run `lia repl` for expressions, persistent value bindings, declarations and
+validated isolated routine execution. Multiline input is supported.
+Use `:type expression`, `:bindings`, `:reset`, `:abort` and `:quit`.
+`lia repl --base-dir programs` selects the package directory.
+See [REPL.md](REPL.md) for session semantics and examples.
+
+### C interoperability
+
+Declare `extern "C" fn add(a: Int, b: Int) -> Int from "./libops.so";`
+to call a native library. The supported ABI uses 64-bit Int, Bool, copied
+UTF-8 String arguments and Unit returns. Foreign calls use typed signatures,
+and termination is assumed by programmer contract. Add `cost "O(N)"` to
+provide a trusted bound; otherwise cost remains unknown. `lia externs file.lia`
+lists the external bindings potentially used, with locations, callers and costs.
+Building requires a C compiler, ar,
+pkg-config and libffi development files.
+See [FFI.md](FFI.md) for ABI contracts and the native trust boundary.

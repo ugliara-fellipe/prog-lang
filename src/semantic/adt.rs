@@ -39,6 +39,15 @@ impl Constructors {
                 for name in names {
                     if registry.ambiguous.contains(&name) {continue;}
                     if registry.entries.get(&name).is_some_and(|old|old.owner!=owner || old.variant!=variant.name) {
+                        // Local constructors shadow only implicit prelude names.
+                        // Explicitly imported conflicting constructors stay ambiguous.
+                        let builtin=|owner:&str| ["option","result"].into_iter().find(|pkg|
+                            registry.aliases.get(&format!("{}.{}",pkg,if *pkg=="option"{"Option"}else{"Result"})).is_some_and(|n|n==owner));
+                        let old=&registry.entries[&name];
+                        let old_implicit=builtin(&old.owner).is_some_and(|p|!program.imports.iter().any(|i|i.package==p));
+                        let new_implicit=builtin(&owner).is_some_and(|p|!program.imports.iter().any(|i|i.package==p));
+                        if !name.contains('.') && old_implicit && builtin(&owner).is_none(){registry.entries.insert(name,c.clone());continue;}
+                        if !name.contains('.') && new_implicit && builtin(&old.owner).is_none(){continue;}
                         registry.entries.remove(&name);registry.ambiguous.insert(name);
                     } else {registry.entries.insert(name,c.clone());}
                 }

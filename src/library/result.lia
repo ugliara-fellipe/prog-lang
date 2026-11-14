@@ -1,4 +1,4 @@
-// Bundled ordinary Lia code. Import explicitly with `import result`.
+// Built-in typed helpers, available in the default language scope.
 type Result<T, E> = Ok(T) | Err(E)
 func is_ok<T, E>(value: Result[T, E]) -> Bool {
     match value { Ok(_) => True, Err(_) => False }
